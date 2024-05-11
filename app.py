@@ -1,5 +1,6 @@
 # builtins
 import concurrent.futures as futures
+import logging
 
 # third party
 import grpc
@@ -8,6 +9,16 @@ import click
 # modules
 import src.servicer as servicer
 from container_maker_spec.service_pb2_grpc import add_ContainerMakerAPIServicer_to_server
+
+
+# logger setup
+logger: logging.Logger = logging.getLogger(__name__)
+handler: logging.StreamHandler = logging.StreamHandler()
+formatter: logging.Formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+logger.setLevel(logging.DEBUG)
+handler.setLevel(logging.DEBUG)
+handler.setFormatter(formatter)
+logger.addHandler(handler)
 
 
 def serve(
@@ -31,12 +42,10 @@ def serve(
     add_ContainerMakerAPIServicer_to_server(container_maker_servicer, server)
 
     # construct server_bind
-    server_address: str = address if address else "[::]"
-    server_port: int = port if port else 50051
-    server_bind: str = f"{server_address}:{server_port}"
+    server_bind: str = f"{address}:{port}"
 
     # add secure/insecure channel
-    if use_ssl:
+    if not use_ssl:
         server.add_insecure_port(server_bind)
     else:
         server.add_secure_port(server_bind)
@@ -44,15 +53,17 @@ def serve(
     # Run server
     try:
         server.start()
+        logger.info(f"Server started at: {address}:{port}")
         server.wait_for_termination()
-    except Exception:
+    except Exception as e:
+        logger.error(e.details())
         server.stop()
 
 
 @click.command()
 @click.option("--server_threads", type=int, default=10, help="Number of threads to run the grpc server")
-@click.option("--address", type=str, required=False, help="IP address of the grpc server")
-@click.option("--port", type=int, required=False, help="Port of the grpc server")
+@click.option("--address", type=str, default="[::]", help="IP address of the grpc server")
+@click.option("--port", type=int, default=50052, help="Port of the grpc server")
 @click.option("--use_ssl", type=bool, default=False, help="Use SSL flag")
 def main(
     server_threads: int,
