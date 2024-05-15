@@ -48,12 +48,16 @@ def serve(
     if not use_ssl:
         server.add_insecure_port(server_bind)
     else:
-        server.add_secure_port(server_bind)
+        server_key = open('./cert/server.key', 'rb').read()
+        server_cert = open('./cert/server.crt', 'rb').read()
+        ca_cert = open('./cert/ca.crt', 'rb').read()
+        credentials = grpc.ssl_server_credentials([(server_key, server_cert)], root_certificates=ca_cert)
+        server.add_secure_port(server_bind, credentials)
 
     # Run server
     try:
         server.start()
-        logger.info(f"Server started at: {address}:{port}")
+        logger.info(f"Server started {'with SSL' if use_ssl else ''} at: {address}:{port}")
         server.wait_for_termination()
     except Exception as e:
         logger.error(e.details())

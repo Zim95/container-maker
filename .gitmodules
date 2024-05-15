@@ -1,3 +1,6 @@
 [submodule "container-maker-spec"]
 	path = container-maker-spec
 	url = https://github.com/Zim95/container-maker-spec.git
+[submodule "grpc_ssl_cert_generator"]
+	path = grpc_ssl_cert_generator
+	url = https://github.com/Zim95/grpc_ssl_cert_generator.git
