@@ -8,4 +8,6 @@ API to create, list, delete and update containers in different container environ
     git clone --recurse-submodules https://github.com/Zim95/container-maker
     ```
 
-2. Install the 
+2. Run the setup command.
+    ```
+    ```
