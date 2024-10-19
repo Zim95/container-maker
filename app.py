@@ -9,6 +9,7 @@ import click
 # modules
 import src.servicer as servicer
 from container_maker_spec.service_pb2_grpc import add_ContainerMakerAPIServicer_to_server
+import src.utils as utils
 
 
 # logger setup
@@ -32,35 +33,36 @@ def serve(
 
     Author: Namah Shrestha
     """
-    # create server
-    server: grpc.Server = grpc.server(
-        futures.ThreadPoolExecutor(max_workers=server_threads)
-    )
-
-    # add container maker servicer implementation
-    container_maker_servicer: servicer.ContainerMakerAPIServicer = servicer.ContainerMakerAPIServicerImpl()
-    add_ContainerMakerAPIServicer_to_server(container_maker_servicer, server)
-
-    # construct server_bind
-    server_bind: str = f"{address}:{port}"
-
-    # add secure/insecure channel
-    if not use_ssl:
-        server.add_insecure_port(server_bind)
-    else:
-        server_key = open('./cert/server.key', 'rb').read()
-        server_cert = open('./cert/server.crt', 'rb').read()
-        ca_cert = open('./cert/ca.crt', 'rb').read()
-        credentials = grpc.ssl_server_credentials([(server_key, server_cert)], root_certificates=ca_cert)
-        server.add_secure_port(server_bind, credentials)
-
-    # Run server
     try:
+        # create server
+        server: grpc.Server = grpc.server(
+            futures.ThreadPoolExecutor(max_workers=server_threads)
+        )
+
+        # add container maker servicer implementation
+        container_maker_servicer: servicer.ContainerMakerAPIServicer = servicer.ContainerMakerAPIServicerImpl()
+        add_ContainerMakerAPIServicer_to_server(container_maker_servicer, server)
+
+        # construct server_bind
+        server_bind: str = f"{address}:{port}"
+
+        # add secure/insecure channel
+        if not use_ssl:
+            server.add_insecure_port(server_bind)
+        else:
+            server_key: bytes = utils.read_certs('SERVER_KEY', './cert/server.key')
+            server_cert: bytes = utils.read_certs('SERVER_CRT', './cert/server.crt')
+            ca_cert: bytes = utils.read_certs('CA_CRT', './cert/ca.crt')
+            credentials: grpc.ServerCredentials = grpc.ssl_server_credentials([(server_key, server_cert)], root_certificates=ca_cert)
+            server.add_secure_port(server_bind, credentials)
+
         server.start()
         logger.info(f"Server started {'with SSL' if use_ssl else ''} at: {address}:{port}")
         server.wait_for_termination()
+    except FileNotFoundError as fnfe:
+        logger.error(str(fnfe))
     except Exception as e:
-        logger.error(e.details())
+        logger.error(str(e))
         server.stop()
 
 
