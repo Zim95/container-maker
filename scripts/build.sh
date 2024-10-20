@@ -3,7 +3,7 @@
 # Image details
 IMAGE_NAME=container-maker
 IMAGE_TAG=latest
-DOCKERFILE=Dockerfile
+DOCKERFILE=./dockerfiles/Dockerfile
 REPOSITORY=zim95
 
 # docker login

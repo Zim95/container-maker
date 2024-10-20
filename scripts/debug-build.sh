@@ -3,7 +3,7 @@
 # Image details
 IMAGE_NAME=container-maker-debug
 IMAGE_TAG=latest
-DOCKERFILE=Dockerfile.debug
+DOCKERFILE=./dockerfiles/Dockerfile.debug
 REPOSITORY=zim95
 
 # docker login

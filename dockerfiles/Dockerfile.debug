@@ -12,5 +12,13 @@ RUN pip install -r requirements.txt
 # install container maker spec
 RUN pip install container-maker-spec/
 
-# run code
-CMD ["python", "app.py", "--use_ssl", "true"]
+# Copy entrypoint script
+COPY ./dockerfiles/entrypoint-debug.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+# Expose ports
+EXPOSE 8888
+
+# Use the entrypoint script
+ENTRYPOINT ["/entrypoint.sh"]
+

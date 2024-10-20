@@ -1,5 +1,4 @@
 cert/
-demo/
 .dockerignore
 .gitmodules
 .gitignore

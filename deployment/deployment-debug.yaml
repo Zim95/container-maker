@@ -32,6 +32,16 @@ spec:
             secretKeyRef:
               name: grpc-certs
               key: server.crt
+        - name: CLIENT_KEY
+          valueFrom:
+            secretKeyRef:
+              name: grpc-certs
+              key: client.key
+        - name: CLIENT_CRT
+          valueFrom:
+            secretKeyRef:
+              name: grpc-certs
+              key: client.crt
         - name: CA_CRT
           valueFrom:
             secretKeyRef:
