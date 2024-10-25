@@ -12,6 +12,9 @@ RUN pip install -r requirements.txt
 # install container maker spec
 RUN pip install container-maker-spec/
 
+# install vim
+RUN apt-get install vim
+
 # Copy entrypoint script
 COPY ./dockerfiles/entrypoint-debug.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh

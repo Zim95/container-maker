@@ -72,18 +72,13 @@ API to create, list, delete and update containers in different container environ
     python app.py --use_ssl true
     ```
 
-8. Now also run the jupyter notebook:
-    ```
-    pip install notebook
-    ```
-    Run the notebook
-    ```
-    jupyter notebook --allow-root
-    ```
-    Then from another terminal, forward port 8888.
+8. Now also run the jupyter notebook. Do this from a separate terminal window, keep the app running:
     ```
     kubectl port-forward pod/<pod id> -n browseterm 8888:8888
     ```
+    Navigate to `localhost:8000` and go to the `demo` folder.
+
+9. You can now make changes and experment things using the jupyter notebook.
 
 # Build and deploy:
 1. Clone the repository, if you haven't already.
