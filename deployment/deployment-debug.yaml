@@ -1,4 +1,28 @@
 ---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  namespace: browseterm # Replace with the correct namespace
+  name: browseterm-cluster-role
+rules:
+- apiGroups: ["", "networking.k8s.io"]
+  resources: ["namespaces", "pods", "pods/exec", "networkpolicies", "services", "endpoints", "service/status", "endpoints/status", "configmaps", "secrets"]
+  verbs: ["list", "create", "delete", "get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: browseterm-cluster-role-binding
+  namespace: browseterm # Replace with the correct namespace
+subjects:
+- kind: ServiceAccount
+  name: default
+  namespace: browseterm
+roleRef:
+  kind: ClusterRole
+  name: browseterm-cluster-role
+  apiGroup: rbac.authorization.k8s.io
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:

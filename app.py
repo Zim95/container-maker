@@ -5,11 +5,14 @@ import logging
 # third party
 import grpc
 import click
+import docker
+import kubernetes.client.rest as k8s_rest
 
 # modules
 import src.servicer as servicer
 from container_maker_spec.service_pb2_grpc import add_ContainerMakerAPIServicer_to_server
 import src.utils as utils
+import src.exceptions as exceptions
 
 
 # logger setup
@@ -59,10 +62,21 @@ def serve(
         server.start()
         logger.info(f"Server started {'with SSL' if use_ssl else ''} at: {address}:{port}")
         server.wait_for_termination()
+    except exceptions.UnsupportedRuntimeEnvironment as e:
+        logger.error(str(e))
+    except exceptions.ContainerManagerNotFound as e:
+        logger.error(str(e))
+    except docker.errors.DockerException as de:
+        logger.error(str(de))
+    except k8s_rest.ApiException as ka:
+        logger.error(str(ka))
+    except exceptions.ContainerClientNotResolved as ccnr:
+        logger.error(str(ccnr))
     except FileNotFoundError as fnfe:
         logger.error(str(fnfe))
     except Exception as e:
         logger.error(str(e))
+    finally:
         server.stop()
 
 

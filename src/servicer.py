@@ -2,13 +2,23 @@
 from container_maker_spec.service_pb2_grpc import ContainerMakerAPIServicer
 
 # types
-from container_maker_spec.types_pb2 import CreateContainerResponse, CreateContainerResponseItem
+from container_maker_spec.types_pb2 import CreateContainerRequest
+from container_maker_spec.types_pb2 import StartContainerRequest
+from container_maker_spec.types_pb2 import StopContainerRequest
+from container_maker_spec.types_pb2 import DeleteContainerRequest
+from container_maker_spec.types_pb2 import CreateContainerResponse
 from container_maker_spec.types_pb2 import StartContainerResponse
 from container_maker_spec.types_pb2 import StopContainerResponse
 from container_maker_spec.types_pb2 import DeleteContainerResponse
 
 # modules
-from src.containers import 
+import src.handlers as handlers
+import src.exceptions as exceptions
+
+# third party
+import grpc
+import docker
+import kubernetes.client.rest as k8s_rest
 
 # TODO: Add some utilities classes for common functionalities here.
 
@@ -20,23 +30,28 @@ class ContainerMakerAPIServicerImpl(ContainerMakerAPIServicer):
 
     Author: Namah Shrestha
     """
-    def createContainer(self, request, context):
+
+    def createContainer(self, request: CreateContainerRequest, context: grpc.ServicerContext) -> CreateContainerResponse:
         try:
-            # create container here. Call the create function here.
+            """
+            Create container request.
 
-
-            create_container_response_item = CreateContainerResponseItem(
-                container_id="test_id",
-                container_image=request.image_name,
-                container_name=request.container_name,
-                container_network=request.container_network,
-                container_port=5
-            )
-            response: CreateContainerResponse = CreateContainerResponse()
-            response.create_container_response_item.extend([create_container_response_item])
-            return response
+            Author: Namah Shrestha
+            """
+            handler: handlers.Handler = handlers.CreateContainerHandler(request)
+            return handler.handle()
+        except exceptions.UnsupportedRuntimeEnvironment as e:
+            raise exceptions.UnsupportedRuntimeEnvironment(e)
+        except exceptions.ContainerManagerNotFound as e:
+            raise exceptions.ContainerManagerNotFound(e)
+        except docker.errors.DockerException as de:
+            raise docker.errors.DockerException(de)
+        except k8s_rest.ApiException as ka:
+            raise k8s_rest.ApiException(ka)
+        except exceptions.ContainerClientNotResolved as ccnr:
+            raise exceptions.ContainerClientNotResolved(ccnr)
         except Exception as e:
-            raise Exception(e.details())
+            raise Exception(e)
 
     def startContainer(self, request, context):
         raise Exception("Test Exception")
