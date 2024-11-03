@@ -1,6 +1,5 @@
 cert/
 deployment/
-dockerfiles/
 scripts/
 .dockerignore
 .gitmodules
