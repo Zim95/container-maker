@@ -13,7 +13,7 @@ from container_maker_spec.types_pb2 import DeleteContainerResponse
 
 # modules
 import src.handlers as handlers
-import src.exceptions as exceptions
+import src.common.exceptions as exceptions
 
 # third party
 import grpc
