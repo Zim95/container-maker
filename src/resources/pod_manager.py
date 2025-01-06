@@ -1,4 +1,5 @@
 # modules
+from src.resources.dataclasses.pod.delete_pod_dataclass import DeletePodDataClass
 from src.resources.resource_manager import KubernetesResourceManager
 from src.resources.dataclasses.pod.create_pod_dataclass import CreatePodDataClass
 from src.resources.dataclasses.pod.list_pod_dataclass import ListPodDataClass
@@ -35,7 +36,7 @@ class PodManager(KubernetesResourceManager):
     def create(cls, data: CreatePodDataClass) -> dict:
         try:
             cls.check_kubernetes_client()
-            pods: list[dict] = cls.client.list(ListPodDataClass(**{'namespace_name': data.namespace_name}))
+            pods: list[dict] = cls.list(ListPodDataClass(**{'namespace_name': data.namespace_name}))
             pod_name_id_map: dict = {
                 pod.metadata.name: {'pod_id': pod.metadata.uid, 'pod_namespace': pod.metadata.namespace} for pod in pods}
             
@@ -77,6 +78,19 @@ class PodManager(KubernetesResourceManager):
             }
         except ApiException as ae:
             raise ApiException(f'Error occured while listing namespace: {str(ae)}') from ae
+        except UnsupportedRuntimeEnvironment as ure:
+            raise UnsupportedRuntimeEnvironment(f'Unsupported Run time Environment: {str(ure)}') from ure
+        except Exception as e:
+            raise Exception(f'Unkown error occured: {str(e)}') from e
+
+    @classmethod
+    def delete(cls, data: DeletePodDataClass) -> dict:
+        try:
+            cls.check_kubernetes_client()
+            cls.client.delete_namespaced_pod(data.pod_name, data.namespace_name)
+            return {'status': 'success'}
+        except ApiException as ae:
+            raise ApiException(f'Error occured while deleting pod: {str(ae)}') from ae
         except UnsupportedRuntimeEnvironment as ure:
             raise UnsupportedRuntimeEnvironment(f'Unsupported Run time Environment: {str(ure)}') from ure
         except Exception as e:

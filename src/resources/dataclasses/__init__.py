@@ -39,3 +39,11 @@ class DeleteResourceDataClass:
     Base Data class for deleting a resource.
     '''
     pass
+
+
+class ResourceDataClassBuilder:
+    '''
+    Builds a dataclass from a dictionary.
+    '''
+    def build(self, data: dict) -> dataclass:
+        pass
