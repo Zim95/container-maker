@@ -34,7 +34,6 @@ class NamespaceManager(KubernetesResourceManager):
         except Exception as e:
             raise Exception(f'Unkown error occured: {str(e)}') from e
 
-
     @classmethod
     def create(cls, data: CreateNamespaceDataClass) -> dict:
         '''

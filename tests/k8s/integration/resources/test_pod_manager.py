@@ -1,15 +1,44 @@
+'''
+IMPORTANT NOTE for namespaces:
+- When old namespace is not deleted, it will cause an exception when we try creating a new namespace with the same name.
+- So we need to wait for the old namespace to be deleted before creating a new namespace with the same name.
+
+# Issue 1: Namespace name conflict between test suites.
+- If all test suits use the same namespace, we will need to wait for the termination of the old namespace from the previous test suite,
+    until we can create a new namespace with the same name for another test suite.
+- To avoid this, we create a new namespace for every test suite. For example, for test suite TestPodManager will have test-pod-manager as the namespace.
+
+# Issue 2: Namespace name conflict between tests within the same test suite.
+- setUp and tearDown run after each test.
+- If we delete the namespace in tearDown, it will be triggered after each test.
+- So, when setup tries to create a namespace for the new test, it will cause a conflict because the namespace is still getting deleted from the previous test.
+- When this happens, it will cause an exception when we try creating a new namespace with the same name.
+- If we create a namespace in setUp, it will cause a conflict with the other tests within the same test suite.
+- To avoid this, we don't delete the namespace in tearDown.
+
+# Issue 3: How to delete lingering namespaces?
+- Since, we don't delete the namespace in tearDown, it will remain in the cluster after all tests are done.
+- We need to delete these lingering namespaces after all tests are done.
+- We can do this by using a separate test suite for deleting namespaces.
+
+# Issue 4: How to make sure the cleanup suite runs last?
+- We can use the prefix 'ZZZ_' to the test suite name to make sure it runs last.
+- So our cleanup test suite name will be 'ZZZ_Cleanup'.
+'''
+
 # builtins
 from unittest import TestCase
 
 # modules
+from src.resources.dataclasses.namespace.delete_namespace_dataclass import DeleteNamespaceDataClass
 from src.resources.dataclasses.pod.delete_pod_dataclass import DeletePodDataClass
 from src.resources.namespace_manager import NamespaceManager
 from src.resources.dataclasses.namespace.create_namespace_dataclass import CreateNamespaceDataClass
-from src.resources.dataclasses.namespace.delete_namespace_dataclass import DeleteNamespaceDataClass
 from src.resources.pod_manager import PodManager
 from src.resources.dataclasses.pod.list_pod_dataclass import ListPodDataClass
 from src.resources.dataclasses.pod.create_pod_dataclass import CreatePodDataClass
 
+NAMESPACE_NAME: str = 'test-pod-manager'
 
 class TestPodManager(TestCase):
 
@@ -19,7 +48,7 @@ class TestPodManager(TestCase):
         '''
         self.image_name: str = 'zim95/ssh_ubuntu:latest'
         self.pod_name: str = 'test-ssh-pod'
-        self.namespace_name: str = 'test-namespace'
+        self.namespace_name: str = NAMESPACE_NAME
         self.target_ports: set = {22, 23}
         self.environment_variables: dict = {
             "SSH_PASSWORD": "testpwd"
@@ -31,7 +60,6 @@ class TestPodManager(TestCase):
             target_ports=self.target_ports,
             environment_variables=self.environment_variables,
         )
-        
         NamespaceManager.create(CreateNamespaceDataClass(**{'namespace_name': self.namespace_name}))
 
     def test_creation_and_removal_of_pods(self) -> None:
@@ -40,48 +68,48 @@ class TestPodManager(TestCase):
         Runs: list, create and delete methods to test behavior.
         '''
         # list all pods -> should return empty.
-        pods: list[dict] = PodManager.list(ListPodDataClass(**{'namespace_name': self.namespace_name}))
-        assert pods == []
+        pods_old: list[dict] = PodManager.list(ListPodDataClass(**{'namespace_name': self.namespace_name}))
+        assert pods_old == []
 
         # create a pod -> dummy pod.
         pod: dict = PodManager.create(self.create_pod_data)
-        breakpoint()
+
         # verify pod properties
-        # self.assertEqual(pod['metadata']['name'], self.pod_name)
-        # self.assertEqual(pod['metadata']['namespace'], self.namespace_name)
-        # self.assertEqual(pod['spec']['containers'][0]['image'], self.image_name)
+        self.assertEqual(pod['pod_name'], self.pod_name)
+        self.assertEqual(pod['pod_namespace'], self.namespace_name)
 
         # list all pods -> should have a list.
-        pods: list[dict] = PodManager.list(ListPodDataClass(**{'namespace_name': self.namespace_name}))
-        assert len(pods) == 1
+        pods_new: list[dict] = PodManager.list(ListPodDataClass(**{'namespace_name': self.namespace_name}))
+        assert len(pods_new) == 1
 
         # delete the pod -> cleanup.
         PodManager.delete(DeletePodDataClass(**{'namespace_name': self.namespace_name, 'pod_name': self.pod_name}))
+        pods_last: list[dict] = PodManager.list(ListPodDataClass(**{'namespace_name': self.namespace_name}))
+        assert pods_last == []
+
+    def test_duplicate_pod_creation(self) -> None:
+        '''
+        Test the creation of a pod with the same name as an existing pod.
+        Result: There should be only one pod.
+        '''
+        PodManager.create(self.create_pod_data)
+        PodManager.create(self.create_pod_data)
+
+        # There should be only one pod.
         pods: list[dict] = PodManager.list(ListPodDataClass(**{'namespace_name': self.namespace_name}))
-        assert pods == []
+        assert len(pods) == 1
 
-    # def test_duplicate_pod_creation(self) -> None:
-    #     '''
-    #     Test the creation of a pod with the same name as an existing pod.
-    #     '''
-    #     # Create the first pod
-    #     PodManager.create(self.create_pod_data)
-        
-    #     # Attempt to create a second pod with the same name
-    #     with self.assertRaises(Exception) as context:
-    #         PodManager.create(self.create_pod_data)
-        
-    #     # Verify error message (optional, depending on your error handling)
-    #     self.assertIn('already exists', str(context.exception))
+        # Cleanup
+        PodManager.delete(DeletePodDataClass(**{
+            'namespace_name': self.namespace_name, 
+            'pod_name': self.pod_name
+        }))
 
-    #     # Cleanup
-    #     PodManager.delete(DeletePodDataClass(**{
-    #         'namespace_name': self.namespace_name, 
-    #         'pod_name': self.pod_name
-    #     }))
 
-    def tearDown(self) -> None:
+class ZZZ_Cleanup(TestCase):
+
+    def test_cleanup(self) -> None:
         '''
-        Delete the created namespace.
+        Delete the namespace.
         '''
-        NamespaceManager.delete(DeleteNamespaceDataClass(**{'namespace_name': self.namespace_name}))
+        NamespaceManager.delete(DeleteNamespaceDataClass(**{'namespace_name': NAMESPACE_NAME}))
