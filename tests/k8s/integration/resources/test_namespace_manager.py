@@ -14,6 +14,7 @@ class TestNamespaceManager(TestCase):
         '''
         Test the creation of namespace
         '''
+        print('Test: test_namespace_creation_and_removal')
         # get all namespaces
         dummy_namespace: str = 'test-namespace-manager'
         initial_namespaces: list[dict] = NamespaceManager.list()
@@ -35,7 +36,7 @@ class TestNamespaceManager(TestCase):
         '''
         Duplicate namespaces should not be created without any errors.
         '''
-
+        print('Test: test_no_duplicate_namespace_created')
         dummy_namespace: str = 'test-namespace-manager'
 
         # create a namespace

@@ -46,6 +46,7 @@ class TestPodManager(TestCase):
         '''
         Create a namespace.
         '''
+        print('Setup: setUp')
         self.image_name: str = 'zim95/ssh_ubuntu:latest'
         self.pod_name: str = 'test-ssh-pod'
         self.namespace_name: str = NAMESPACE_NAME
@@ -67,6 +68,7 @@ class TestPodManager(TestCase):
         Test the creation of pods and their removal.
         Runs: list, create and delete methods to test behavior.
         '''
+        print('Test: test_creation_and_removal_of_pods')
         # list all pods -> should return empty.
         pods_old: list[dict] = PodManager.list(ListPodDataClass(**{'namespace_name': self.namespace_name}))
         assert pods_old == []
@@ -92,6 +94,7 @@ class TestPodManager(TestCase):
         Test the creation of a pod with the same name as an existing pod.
         Result: There should be only one pod.
         '''
+        print('Test: test_duplicate_pod_creation')
         PodManager.create(self.create_pod_data)
         PodManager.create(self.create_pod_data)
 
@@ -112,4 +115,5 @@ class ZZZ_Cleanup(TestCase):
         '''
         Delete the namespace.
         '''
+        print('Cleanup: test_cleanup')
         NamespaceManager.delete(DeleteNamespaceDataClass(**{'namespace_name': NAMESPACE_NAME}))
