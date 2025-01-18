@@ -2,7 +2,7 @@
 from abc import abstractmethod
 
 # modules
-from src.resources.dataclasses import ListResourceDataClass
+from src.resources.dataclasses import GetResourceDataClass, ListResourceDataClass
 from src.resources.dataclasses import CreateResourceDataClass
 from src.resources.dataclasses import StartResourceDataClass
 from src.resources.dataclasses import StopResourceDataClass
@@ -32,6 +32,17 @@ class ResourceManager:
         :returns: list[dict]: List of resources
         """
         raise NotImplementedError(f'{cls.__name__}.list: Is not implemented for this resource.')
+
+    @classmethod
+    @abstractmethod
+    def get(cls, data: GetResourceDataClass) -> dict:
+        """
+        Get a resource.
+        :params:
+            :data: GetResourceDataClass
+        :returns: dict: Info of resource
+        """
+        raise NotImplementedError(f'{cls.__name__}.get: Is not implemented for this resource.')
 
     @classmethod
     @abstractmethod

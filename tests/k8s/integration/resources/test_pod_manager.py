@@ -28,6 +28,8 @@ IMPORTANT NOTE for namespaces:
 
 # builtins
 from unittest import TestCase
+import time
+import paramiko
 
 # modules
 from src.resources.dataclasses.namespace.delete_namespace_dataclass import DeleteNamespaceDataClass
@@ -79,6 +81,7 @@ class TestPodManager(TestCase):
         # verify pod properties
         self.assertEqual(pod['pod_name'], self.pod_name)
         self.assertEqual(pod['pod_namespace'], self.namespace_name)
+        self.assertEqual(pod['pod_ip'], PodManager.get_pod_ip(self.namespace_name, self.pod_name))
 
         # list all pods -> should have a list.
         pods_new: list[dict] = PodManager.list(ListPodDataClass(**{'namespace_name': self.namespace_name}))
@@ -92,13 +95,22 @@ class TestPodManager(TestCase):
     def test_duplicate_pod_creation(self) -> None:
         '''
         Test the creation of a pod with the same name as an existing pod.
-        Result: There should be only one pod.
+        Result: Should return the existing pod instead of creating a duplicate.
         '''
         print('Test: test_duplicate_pod_creation')
-        PodManager.create(self.create_pod_data)
-        PodManager.create(self.create_pod_data)
-
-        # There should be only one pod.
+        
+        # Create first pod and get its UID
+        first_pod = PodManager.create(self.create_pod_data)
+        first_uid = first_pod['pod_id']
+        
+        # Try to create "duplicate" pod
+        second_pod = PodManager.create(self.create_pod_data)
+        second_uid = second_pod['pod_id']
+        
+        # Verify it's the same pod (ids should match)
+        assert first_uid == second_uid
+        
+        # Verify only one pod exists
         pods: list[dict] = PodManager.list(ListPodDataClass(**{'namespace_name': self.namespace_name}))
         assert len(pods) == 1
 
@@ -107,6 +119,48 @@ class TestPodManager(TestCase):
             'namespace_name': self.namespace_name, 
             'pod_name': self.pod_name
         }))
+
+    def test_ssh_into_pod(self) -> None:
+        '''
+        Test if you can ssh into the pod.
+        Result: Should get the output "SSH test successful".
+        '''
+        print('Test: test_ssh_into_pod')
+
+        # Create the pod first
+        pod: dict = PodManager.create(self.create_pod_data)
+
+        # Wait for pod to be ready (give it time to start SSH server)
+        time.sleep(10)
+
+        # Setup SSH client
+        ssh: paramiko.SSHClient = paramiko.SSHClient()
+        ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+
+        try:
+            # Connect to the pod
+            ssh.connect(
+                hostname=pod['pod_ip'],
+                username='ubuntu',
+                password=self.environment_variables['SSH_PASSWORD'],
+                port=22
+            )
+
+            # Execute a simple command to test connection
+            _, stdout, _ = ssh.exec_command('echo "SSH test successful"')
+            output = stdout.read().decode().strip()
+
+            # Verify the output
+            breakpoint()
+            self.assertEqual(output, "SSH test successful")
+        finally:
+            # Clean up SSH connection
+            ssh.close()
+            # Delete the pod
+            PodManager.delete(DeletePodDataClass(**{
+                'namespace_name': self.namespace_name,
+                'pod_name': self.pod_name
+            }))
 
 
 class ZZZ_Cleanup(TestCase):

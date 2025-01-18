@@ -11,3 +11,4 @@ class DeleteNamespaceDataClass(DeleteResourceDataClass):
     Delete Namespace DataClass
     '''
     namespace_name: str  # name of the namespace.
+

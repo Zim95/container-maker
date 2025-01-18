@@ -10,6 +10,5 @@ class DeleteServiceDataClass(DeleteResourceDataClass):
     '''
     Delete Service DataClass
     '''
-    # namespace_name: str
-    # service_name: str 
-    pass
+    namespace_name: str
+    service_name: str 

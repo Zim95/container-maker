@@ -5,16 +5,6 @@ from dataclasses import dataclass
 from src.resources.dataclasses import CreateResourceDataClass
 
 
-# @dataclass
-# class ServiceInformationDataClass:
-#     '''
-#     Service information for creating a pod.
-#     '''
-#     service_port: int  # The port of the service.
-#     target_port: int  # The port of the pod.
-#     protocol: str  # The Protocol of the service.
-
-
 @dataclass
 class CreatePodDataClass(CreateResourceDataClass):
     '''

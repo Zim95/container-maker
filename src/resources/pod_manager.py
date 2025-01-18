@@ -1,6 +1,7 @@
 # modules
 import time
 from src.resources.dataclasses.pod.delete_pod_dataclass import DeletePodDataClass
+from src.resources.dataclasses.pod.get_pod_dataclass import GetPodDataClass
 from src.resources.resource_manager import KubernetesResourceManager
 from src.resources.dataclasses.pod.create_pod_dataclass import CreatePodDataClass
 from src.resources.dataclasses.pod.list_pod_dataclass import ListPodDataClass
@@ -14,6 +15,7 @@ from kubernetes.client import V1Pod
 from kubernetes.client import V1ObjectMeta
 from kubernetes.client import V1PodSpec
 from kubernetes.client import V1Container
+from kubernetes import watch
 
 
 class PodManager(KubernetesResourceManager):
@@ -34,17 +36,50 @@ class PodManager(KubernetesResourceManager):
             raise Exception(f'Unkown error occured: {str(e)}') from e
 
     @classmethod
+    def get(cls, data: GetPodDataClass) -> dict:
+        '''
+        Get a pod.
+        :params: data: GetPodDataClass
+        :returns: dict: Pod Details
+        '''
+        try:
+            cls.check_kubernetes_client()
+            return cls.client.read_namespaced_pod(name=data.pod_name, namespace=data.namespace_name)
+        except ApiException as ae:
+            if ae.status == 404:
+                return {}
+            raise ApiException(f'Error occured while getting pod: {str(ae)}') from ae
+        except UnsupportedRuntimeEnvironment as ure:
+            raise UnsupportedRuntimeEnvironment(f'Unsupported Run time Environment: {str(ure)}') from ure
+        except Exception as e:
+            raise Exception(f'Unkown error occured: {str(e)}') from e
+
+    @classmethod
+    def get_pod_ip(cls, namespace_name: str, pod_name: str, timeout_seconds: float = 30.0) -> str:
+        start_time = time.time()
+        while (time.time() - start_time) < timeout_seconds:
+            try:
+                pod = cls.client.read_namespaced_pod(name=pod_name, namespace=namespace_name)
+                if pod.status.pod_ip:
+                    return pod.status.pod_ip
+            except ApiException as e:
+                if e.status != 404:  # Ignore 404 errors while pod is being created
+                    raise
+            time.sleep(1)
+        raise TimeoutError(f"Timeout waiting for pod {pod_name} IP address after {timeout_seconds} seconds")
+
+    @classmethod
     def create(cls, data: CreatePodDataClass) -> dict:
         try:
             cls.check_kubernetes_client()
-            pods: list[dict] = cls.list(ListPodDataClass(**{'namespace_name': data.namespace_name}))
-            pod_name_id_map: dict = {
-                pod.metadata.name: {'pod_id': pod.metadata.uid, 'pod_namespace': pod.metadata.namespace} for pod in pods}
-            
-            # highly unlikely: If pod name already exists. Then return it. Dont create a new one.
-            if data.pod_name in pod_name_id_map.keys():
-                return pod_name_id_map[data.pod_name]
-
+            p: dict = cls.get(GetPodDataClass(namespace_name=data.namespace_name, pod_name=data.pod_name))
+            if p:
+                return {
+                    'pod_id': p.metadata.uid,
+                    'pod_name': p.metadata.name,
+                    'pod_namespace': p.metadata.namespace,
+                    'pod_ip': p.status.pod_ip,
+                }
             # create environment variable list
             environment_variables: list[V1EnvVar] = [
                 V1EnvVar(name=name, value=value)
@@ -77,6 +112,7 @@ class PodManager(KubernetesResourceManager):
                 "pod_id": pod.metadata.uid,
                 "pod_name": pod.metadata.name,
                 "pod_namespace": pod.metadata.namespace,
+                "pod_ip": cls.get_pod_ip(data.namespace_name, data.pod_name),
             }
         except ApiException as ae:
             raise ApiException(f'Error occured while creating pod: {str(ae)}') from ae

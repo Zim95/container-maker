@@ -1,4 +1,5 @@
 # modules
+from src.resources.dataclasses.namespace.get_namespace_dataclass import GetNamespaceDataClass
 from src.resources.resource_manager import KubernetesResourceManager
 from src.resources.dataclasses.namespace.create_namespace_dataclass import CreateNamespaceDataClass
 from src.resources.dataclasses.namespace.delete_namespace_dataclass import DeleteNamespaceDataClass
@@ -20,9 +21,9 @@ class NamespaceManager(KubernetesResourceManager):
     @classmethod
     def list(cls) -> list[dict]:
         '''
-        List a number of available namespaces.
+        List all available namespaces.
         :params: None
-        :returns: None
+        :returns: list[dict]: List of namespaces
         '''
         try:
             cls.check_kubernetes_client()
@@ -35,17 +36,35 @@ class NamespaceManager(KubernetesResourceManager):
             raise Exception(f'Unkown error occured: {str(e)}') from e
 
     @classmethod
+    def get(cls, data: GetNamespaceDataClass) -> dict:
+        '''
+        Get a namespace.
+        :params: data: GetNamespaceDataClass
+        :returns: dict: Namespace Details
+        '''
+        try:
+            cls.check_kubernetes_client()
+            return cls.client.read_namespace(name=data.namespace_name)
+        except ApiException as ae:
+            if ae.status == 404:
+                return {}
+            raise ApiException(f'Error occured while getting namespace: {str(ae)}') from ae
+        except UnsupportedRuntimeEnvironment as ure:
+            raise UnsupportedRuntimeEnvironment(f'Unsupported Run time Environment: {str(ure)}') from ure
+        except Exception as e:
+            raise Exception(f'Unkown error occured: {str(e)}') from e
+
+    @classmethod
     def create(cls, data: CreateNamespaceDataClass) -> dict:
         '''
-        Create a namespace.
+        Create a namespace. Return if already exists.
         :params: data: CreateNamespaceDataClass
         :returns: dict: Namespace Details
         '''
         try:
-            namespaces: list[dict] = cls.list()
-            for ns in namespaces:
-                if ns.metadata.name == data.namespace_name:
-                    return ns
+            ns: dict = cls.get(GetNamespaceDataClass(namespace_name=data.namespace_name))
+            if ns:
+                return ns
             namespace: V1Namespace = V1Namespace(
                 metadata=V1ObjectMeta(name=data.namespace_name)
             )

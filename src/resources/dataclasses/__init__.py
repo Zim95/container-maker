@@ -10,6 +10,13 @@ class ListResourceDataClass:
     pass
 
 @dataclass
+class GetResourceDataClass:
+    '''
+    Base Data class for getting a resource.
+    '''
+    pass
+
+@dataclass
 class CreateResourceDataClass:
     '''
     Base Data class for creating a resource.
