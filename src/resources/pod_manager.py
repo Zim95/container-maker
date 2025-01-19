@@ -15,7 +15,6 @@ from kubernetes.client import V1Pod
 from kubernetes.client import V1ObjectMeta
 from kubernetes.client import V1PodSpec
 from kubernetes.client import V1Container
-from kubernetes import watch
 
 
 class PodManager(KubernetesResourceManager):
@@ -94,7 +93,10 @@ class PodManager(KubernetesResourceManager):
 
             # create pod manifest
             pod_manifest: V1Pod = V1Pod(
-                metadata=V1ObjectMeta(name=data.pod_name),
+                metadata=V1ObjectMeta(
+                    name=data.pod_name,
+                    labels={"app": data.pod_name},
+                ),
                 spec=V1PodSpec(
                     containers=[
                         V1Container(

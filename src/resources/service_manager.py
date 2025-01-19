@@ -37,31 +37,30 @@ class ServiceManager(KubernetesResourceManager):
             cls.check_kubernetes_client()
             return cls.client.read_namespaced_service(name=data.service_name, namespace=data.namespace_name)
         except ApiException as ae:
+            if ae.status == 404:
+                return {}
             raise ApiException(f'Error occured while getting service: {str(ae)}') from ae
         except UnsupportedRuntimeEnvironment as ure:
             raise UnsupportedRuntimeEnvironment(f'Unsupported Runtime Environment: {str(ure)}') from ure
         except Exception as e:
             raise Exception(f'Unknown error occurred: {str(e)}') from e
 
+
     @classmethod
     def create(cls, data: CreateServiceDataClass) -> dict:
         try:
             cls.check_kubernetes_client()
             # check for existing services
-            service_list: list[V1Service] = cls.list(ListServiceDataClass(**{'namespace_name': data.namespace_name}))
-            service_name_info_map: dict = {
-                service.metadata.name: {
-                    "service_id": service.metadata.uid,
-                    "service_ip": service._spec.cluster_ip,
-                    "service_name": service.metadata.name,
-                    "service_namespace": data.namespace_name,
-                    "service_port": data.service_port,
+            s: dict = cls.get(GetServiceDataClass(**{'namespace_name': data.namespace_name, 'service_name': data.service_name}))
+            if s:
+                return {
+                    'service_id': s.metadata.uid,
+                    'service_name': s.metadata.name,
+                    'service_namespace': s.metadata.namespace,
+                    'service_ip': s._spec.cluster_ip,
+                    'service_target_port': s._spec.ports[0].target_port,
+                    'service_port': s._spec.ports[0].port,
                 }
-                for service in service_list
-            }
-            # return existing service if it exists
-            if service_name_info_map.get(data.service_name, {}):
-                return service_name_info_map[data.service_name]
 
             # create the service manifest
             service_manifest: V1Service = V1Service(
@@ -72,7 +71,7 @@ class ServiceManager(KubernetesResourceManager):
                         V1ServicePort(
                             port=data.service_port,
                             target_port=data.target_port,
-                            protocol=data.protocol,
+                            protocol=data.protocol
                         )
                     ],
                     type="LoadBalancer"
@@ -85,8 +84,9 @@ class ServiceManager(KubernetesResourceManager):
                 "service_id": service.metadata.uid,
                 "service_ip": service._spec.cluster_ip,
                 "service_name": service.metadata.name,
-                "service_namespace": data.namespace_name,
-                "service_port": data.service_port,
+                "service_namespace": service.metadata.namespace,
+                "service_target_port": service._spec.ports[0].target_port,
+                "service_port": service._spec.ports[0].port,
             }
         except ApiException as ae:
             raise ApiException(f'Error occurred while creating service: {str(ae)}') from ae

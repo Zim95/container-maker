@@ -131,7 +131,9 @@ class TestPodManager(TestCase):
         pod: dict = PodManager.create(self.create_pod_data)
 
         # Wait for pod to be ready (give it time to start SSH server)
+        print('Waiting for pod to be ready')
         time.sleep(10)
+        print('Pod is ready')
 
         # Setup SSH client
         ssh: paramiko.SSHClient = paramiko.SSHClient()
@@ -151,7 +153,6 @@ class TestPodManager(TestCase):
             output = stdout.read().decode().strip()
 
             # Verify the output
-            breakpoint()
             self.assertEqual(output, "SSH test successful")
         finally:
             # Clean up SSH connection
