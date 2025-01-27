@@ -6,7 +6,7 @@ from src.resources.dataclasses.ingress.create_ingress_dataclass import CreateIng
 from src.resources.dataclasses.ingress.delete_ingress_dataclass import DeleteIngressDataClass
 from src.resources.dataclasses.ingress.get_ingress_dataclass import GetIngressDataClass
 from src.resources.dataclasses.ingress.list_ingress_dataclass import ListIngressDataClass
-from src.resources.resource_manager import KubernetesResourceManager
+from src.resources import KubernetesResourceManager
 from src.common.exceptions import UnsupportedRuntimeEnvironment
 
 # third party

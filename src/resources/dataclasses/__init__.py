@@ -9,12 +9,14 @@ class ListResourceDataClass:
     '''
     pass
 
+
 @dataclass
 class GetResourceDataClass:
     '''
     Base Data class for getting a resource.
     '''
     pass
+
 
 @dataclass
 class CreateResourceDataClass:
@@ -25,32 +27,8 @@ class CreateResourceDataClass:
 
 
 @dataclass
-class StartResourceDataClass:
-    '''
-    Base Data class for starting a resource.
-    '''
-    pass
-
-
-@dataclass
-class StopResourceDataClass:
-    '''
-    Base Data class for stoping a resource.
-    '''
-    pass
-
-
-@dataclass
 class DeleteResourceDataClass:
     '''
     Base Data class for deleting a resource.
     '''
     pass
-
-
-class ResourceDataClassBuilder:
-    '''
-    Builds a dataclass from a dictionary.
-    '''
-    def build(self, data: dict) -> dataclass:
-        pass

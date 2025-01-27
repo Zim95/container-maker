@@ -2,7 +2,7 @@
 import time
 from src.resources.dataclasses.pod.delete_pod_dataclass import DeletePodDataClass
 from src.resources.dataclasses.pod.get_pod_dataclass import GetPodDataClass
-from src.resources.resource_manager import KubernetesResourceManager
+from src.resources import KubernetesResourceManager
 from src.resources.dataclasses.pod.create_pod_dataclass import CreatePodDataClass
 from src.resources.dataclasses.pod.list_pod_dataclass import ListPodDataClass
 from src.common.exceptions import UnsupportedRuntimeEnvironment

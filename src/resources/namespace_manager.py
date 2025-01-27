@@ -1,6 +1,6 @@
 # modules
 from src.resources.dataclasses.namespace.get_namespace_dataclass import GetNamespaceDataClass
-from src.resources.resource_manager import KubernetesResourceManager
+from src.resources import KubernetesResourceManager
 from src.resources.dataclasses.namespace.create_namespace_dataclass import CreateNamespaceDataClass
 from src.resources.dataclasses.namespace.delete_namespace_dataclass import DeleteNamespaceDataClass
 from src.common.exceptions import UnsupportedRuntimeEnvironment

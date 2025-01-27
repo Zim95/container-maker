@@ -6,7 +6,7 @@ from src.resources.dataclasses.service.delete_service_dataclass import DeleteSer
 from src.resources.dataclasses.service.create_service_dataclass import CreateServiceDataClass
 from src.resources.dataclasses.service.get_service_dataclass import GetServiceDataClass
 from src.resources.dataclasses.service.list_service_dataclass import ListServiceDataClass
-from src.resources.resource_manager import KubernetesResourceManager
+from src.resources import KubernetesResourceManager
 from src.common.exceptions import UnsupportedRuntimeEnvironment
 
 # third party
