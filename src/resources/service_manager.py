@@ -1,3 +1,6 @@
+# builtins
+import time
+
 # modules
 from src.resources.dataclasses.service.delete_service_dataclass import DeleteServiceDataClass
 from src.resources.dataclasses.service.create_service_dataclass import CreateServiceDataClass
@@ -45,6 +48,19 @@ class ServiceManager(KubernetesResourceManager):
         except Exception as e:
             raise Exception(f'Unknown error occurred: {str(e)}') from e
 
+    @classmethod
+    def get_service_ip(cls, namespace_name: str, service_name: str, timeout_seconds: float = 30.0) -> str:
+        start_time = time.time()
+        while (time.time() - start_time) < timeout_seconds:
+            try:
+                service = cls.client.read_namespaced_service(name=service_name, namespace=namespace_name)
+                if service._spec.cluster_ip:
+                    return service._spec.cluster_ip
+            except ApiException as e:
+                if e.status != 404:  # Ignore 404 errors while pod is being created
+                    raise
+            time.sleep(1)
+        raise TimeoutError(f"Timeout waiting for service {service_name} IP address after {timeout_seconds} seconds")
 
     @classmethod
     def create(cls, data: CreateServiceDataClass) -> dict:
@@ -64,7 +80,14 @@ class ServiceManager(KubernetesResourceManager):
 
             # create the service manifest
             service_manifest: V1Service = V1Service(
-                metadata=V1ObjectMeta(name=data.service_name),
+                metadata=V1ObjectMeta(
+                    name=data.service_name,
+                    annotations={
+                        "nginx.org/websocket-services": data.service_name,  # for websockets
+                        "nginx.ingress.kubernetes.io/proxy-read-timeout": "3600",  # for websockets
+                        "nginx.ingress.kubernetes.io/proxy-send-timeout": "3600"  # for websockets
+                    }
+                ),
                 spec=V1ServiceSpec(
                     selector={"app": data.pod_name},
                     ports=[
@@ -82,7 +105,7 @@ class ServiceManager(KubernetesResourceManager):
             # return the details
             return {
                 "service_id": service.metadata.uid,
-                "service_ip": service._spec.cluster_ip,
+                "service_ip": cls.get_service_ip(data.namespace_name, data.service_name),
                 "service_name": service.metadata.name,
                 "service_namespace": service.metadata.namespace,
                 "service_target_port": service._spec.ports[0].target_port,
@@ -96,10 +119,25 @@ class ServiceManager(KubernetesResourceManager):
             raise Exception(f'Unknown error occurred: {str(e)}') from e
 
     @classmethod
+    def poll_termination(cls, namespace_name: str, service_name: str, timeout_seconds: float = 2.0) -> None:
+        is_terminated: bool = False
+        while is_terminated != True:
+            services: list[dict] = cls.list(ListServiceDataClass(**{'namespace_name': namespace_name}))
+            found: bool = False
+            for service in services:
+                if service.metadata.name == service_name:
+                    found = True
+                    break
+            is_terminated = not found
+            print(f'Service: {service_name} Deleted:', is_terminated)
+            time.sleep(timeout_seconds)
+
+    @classmethod
     def delete(cls, data: DeleteServiceDataClass) -> dict:
         try:
             cls.check_kubernetes_client()
             cls.client.delete_namespaced_service(data.service_name, data.namespace_name)
+            cls.poll_termination(data.namespace_name, data.service_name) # wait for service to be deleted, otherwise list service will find it and integration tests will fail..
             return {'status': 'success'}
         except ApiException as ae:
             raise ApiException(f'Error occurred while deleting service: {str(ae)}') from ae

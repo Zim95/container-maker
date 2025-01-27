@@ -96,6 +96,11 @@ class PodManager(KubernetesResourceManager):
                 metadata=V1ObjectMeta(
                     name=data.pod_name,
                     labels={"app": data.pod_name},
+                    annotations={
+                        "nginx.org/websocket-services": data.pod_name,  # for websockets
+                        "nginx.ingress.kubernetes.io/proxy-read-timeout": "3600",  # for websockets
+                        "nginx.ingress.kubernetes.io/proxy-send-timeout": "3600"  # for websockets
+                    }
                 ),
                 spec=V1PodSpec(
                     containers=[

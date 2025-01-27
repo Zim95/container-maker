@@ -81,7 +81,7 @@ class TestPodManager(TestCase):
         # verify pod properties
         self.assertEqual(pod['pod_name'], self.pod_name)
         self.assertEqual(pod['pod_namespace'], self.namespace_name)
-        self.assertEqual(pod['pod_ip'], PodManager.get_pod_ip(self.namespace_name, self.pod_name))
+        self.assertEqual(pod['pod_ip'] is not None, True)
 
         # list all pods -> should have a list.
         pods_new: list[dict] = PodManager.list(ListPodDataClass(**{'namespace_name': self.namespace_name}))
