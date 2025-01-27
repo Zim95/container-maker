@@ -6,6 +6,7 @@ from src.resources import KubernetesResourceManager
 from src.resources.dataclasses.pod.create_pod_dataclass import CreatePodDataClass
 from src.resources.dataclasses.pod.list_pod_dataclass import ListPodDataClass
 from src.common.exceptions import UnsupportedRuntimeEnvironment
+from src.resources.resource_config import POD_IP_TIMEOUT_SECONDS
 
 # third party
 from kubernetes.client.rest import ApiException
@@ -54,7 +55,7 @@ class PodManager(KubernetesResourceManager):
             raise Exception(f'Unkown error occured: {str(e)}') from e
 
     @classmethod
-    def get_pod_ip(cls, namespace_name: str, pod_name: str, timeout_seconds: float = 30.0) -> str:
+    def get_pod_ip(cls, namespace_name: str, pod_name: str, timeout_seconds: float = POD_IP_TIMEOUT_SECONDS) -> str:
         start_time = time.time()
         while (time.time() - start_time) < timeout_seconds:
             try:

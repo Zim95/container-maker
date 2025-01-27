@@ -8,6 +8,7 @@ from src.resources.dataclasses.ingress.get_ingress_dataclass import GetIngressDa
 from src.resources.dataclasses.ingress.list_ingress_dataclass import ListIngressDataClass
 from src.resources import KubernetesResourceManager
 from src.common.exceptions import UnsupportedRuntimeEnvironment
+from src.resources.resource_config import INGRESS_IP_TIMEOUT_SECONDS
 
 # third party
 from kubernetes.client.rest import ApiException
@@ -62,7 +63,7 @@ class IngressManager(KubernetesResourceManager):
             raise Exception(f'Unkown error occured: {str(e)}') from e
 
     @classmethod
-    def get_ingress_ip(cls, namespace_name: str, ingress_name: str, timeout_seconds: float = 30.0) -> str:
+    def get_ingress_ip(cls, namespace_name: str, ingress_name: str, timeout_seconds: float = INGRESS_IP_TIMEOUT_SECONDS) -> str:
         start_time = time.time()
         while (time.time() - start_time) < timeout_seconds:
             try:

@@ -8,6 +8,7 @@ from src.resources.dataclasses.service.get_service_dataclass import GetServiceDa
 from src.resources.dataclasses.service.list_service_dataclass import ListServiceDataClass
 from src.resources import KubernetesResourceManager
 from src.common.exceptions import UnsupportedRuntimeEnvironment
+from src.resources.resource_config import SERVICE_IP_TIMEOUT_SECONDS
 
 # third party
 from kubernetes.client.rest import ApiException
@@ -49,7 +50,7 @@ class ServiceManager(KubernetesResourceManager):
             raise Exception(f'Unknown error occurred: {str(e)}') from e
 
     @classmethod
-    def get_service_ip(cls, namespace_name: str, service_name: str, timeout_seconds: float = 30.0) -> str:
+    def get_service_ip(cls, namespace_name: str, service_name: str, timeout_seconds: float = SERVICE_IP_TIMEOUT_SECONDS) -> str:
         start_time = time.time()
         while (time.time() - start_time) < timeout_seconds:
             try:

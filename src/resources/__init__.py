@@ -5,7 +5,7 @@ from abc import abstractmethod
 from src.resources.dataclasses import GetResourceDataClass, ListResourceDataClass
 from src.resources.dataclasses import CreateResourceDataClass
 from src.resources.dataclasses import DeleteResourceDataClass
-from src.resources.utils import get_runtime_environment
+from src.resources.resource_utils import get_runtime_environment
 from src.common.exceptions import UnsupportedRuntimeEnvironment
 
 # third party
