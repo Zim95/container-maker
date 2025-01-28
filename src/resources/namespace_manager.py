@@ -28,7 +28,13 @@ class NamespaceManager(KubernetesResourceManager):
         '''
         try:
             cls.check_kubernetes_client()
-            return cls.client.list_namespace().items
+            return [
+                {
+                    'namespace_id': ns.metadata.uid,
+                    'namespace_name': ns.metadata.name,
+                }
+                for ns in cls.client.list_namespace().items
+            ]
         except ApiException as ae:
             raise ApiException(f'Error occured while listing namespace: {str(ae)}') from ae
         except UnsupportedRuntimeEnvironment as ure:
@@ -45,7 +51,11 @@ class NamespaceManager(KubernetesResourceManager):
         '''
         try:
             cls.check_kubernetes_client()
-            return cls.client.read_namespace(name=data.namespace_name)
+            response: V1Namespace = cls.client.read_namespace(name=data.namespace_name)
+            return {
+                'namespace_id': response.metadata.uid,
+                'namespace_name': response.metadata.name,
+            }
         except ApiException as ae:
             if ae.status == 404:
                 return {}
@@ -79,7 +89,11 @@ class NamespaceManager(KubernetesResourceManager):
                 }
             )
             networking_api: NetworkingV1Api = NetworkingV1Api()
-            return networking_api.create_namespaced_network_policy(data.namespace_name, network_policy)
+            response: V1NetworkPolicy = networking_api.create_namespaced_network_policy(data.namespace_name, network_policy)
+            return {
+                'namespace_id': response.metadata.uid,
+                'namespace_name': response.metadata.name
+            }
         except ApiException as ae:
             raise ApiException(f'Error occured while creating namespace: {str(ae)}') from ae
         except UnsupportedRuntimeEnvironment as ure:

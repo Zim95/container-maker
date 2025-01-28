@@ -27,7 +27,15 @@ class PodManager(KubernetesResourceManager):
     def list(cls, data: ListPodDataClass) -> list[dict]:
         try:
             cls.check_kubernetes_client()
-            return cls.client.list_namespaced_pod(namespace=data.namespace_name).items
+            return [
+                {
+                    'pod_id': pod.metadata.uid,
+                    'pod_name': pod.metadata.name,
+                    'pod_namespace': pod.metadata.namespace,
+                    'pod_ip': pod.status.pod_ip,
+                }
+                for pod in cls.client.list_namespaced_pod(namespace=data.namespace_name).items
+            ]
         except ApiException as ae:
             raise ApiException(f'Error occured while listing pods: {str(ae)}') from ae
         except UnsupportedRuntimeEnvironment as ure:
@@ -44,7 +52,13 @@ class PodManager(KubernetesResourceManager):
         '''
         try:
             cls.check_kubernetes_client()
-            return cls.client.read_namespaced_pod(name=data.pod_name, namespace=data.namespace_name)
+            response: V1Pod = cls.client.read_namespaced_pod(name=data.pod_name, namespace=data.namespace_name)
+            return {
+                'pod_id': response.metadata.uid,
+                'pod_name': response.metadata.name,
+                'pod_namespace': response.metadata.namespace,
+                'pod_ip': response.status.pod_ip,
+            }
         except ApiException as ae:
             if ae.status == 404:
                 return {}
@@ -74,12 +88,7 @@ class PodManager(KubernetesResourceManager):
             cls.check_kubernetes_client()
             p: dict = cls.get(GetPodDataClass(namespace_name=data.namespace_name, pod_name=data.pod_name))
             if p:
-                return {
-                    'pod_id': p.metadata.uid,
-                    'pod_name': p.metadata.name,
-                    'pod_namespace': p.metadata.namespace,
-                    'pod_ip': p.status.pod_ip,
-                }
+                return p
             # create environment variable list
             environment_variables: list[V1EnvVar] = [
                 V1EnvVar(name=name, value=value)
@@ -133,13 +142,8 @@ class PodManager(KubernetesResourceManager):
     def poll_termination(cls, namespace_name: str, pod_name: str, timeout_seconds: float = 2.0) -> None:
         is_terminated: bool = False
         while is_terminated != True:
-            pods: list[dict] = cls.list(ListPodDataClass(**{'namespace_name': namespace_name}))
-            found: bool = False
-            for pod in pods:
-                if pod.metadata.name == pod_name:
-                    found = True
-                    break
-            is_terminated = not found
+            pod: dict = cls.get(GetPodDataClass(**{'namespace_name': namespace_name, 'pod_name': pod_name}))
+            is_terminated = (pod == {})
             print(f'Pod: {pod_name} Deleted:', is_terminated)
             time.sleep(timeout_seconds)
 

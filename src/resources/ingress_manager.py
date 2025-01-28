@@ -37,7 +37,19 @@ class IngressManager(KubernetesResourceManager):
         '''
         try:
             cls.check_kubernetes_client()
-            return cls.client.list_namespaced_ingress(data.namespace_name).items
+            return [
+                {
+                    'ingress_id': ingress.metadata.uid,
+                    'ingress_name': ingress.metadata.name,
+                    'ingress_namespace': ingress.metadata.namespace,
+                    'ingress_ip': (
+                        ingress.status.load_balancer.ingress[0].ip or 
+                        ingress.status.load_balancer.ingress[0].hostname
+                        if ingress.status.load_balancer.ingress else None
+                    ),
+                }
+                for ingress in cls.client.list_namespaced_ingress(data.namespace_name).items
+            ]
         except ApiException as ae:
             raise ApiException(f'Error occured while listing ingress: {str(ae)}') from ae
         except UnsupportedRuntimeEnvironment as ure:
@@ -52,7 +64,17 @@ class IngressManager(KubernetesResourceManager):
         '''
         try:
             cls.check_kubernetes_client()
-            return cls.client.read_namespaced_ingress(data.ingress_name, data.namespace_name)
+            response: V1Ingress = cls.client.read_namespaced_ingress(data.ingress_name, data.namespace_name)
+            return {
+                'ingress_id': response.metadata.uid,
+                'ingress_name': response.metadata.name,
+                'ingress_namespace': response.metadata.namespace,
+                'ingress_ip': (
+                    response.status.load_balancer.ingress[0].ip or 
+                    response.status.load_balancer.ingress[0].hostname
+                    if response.status.load_balancer.ingress else None
+                ),
+            }
         except ApiException as ae:
             if ae.status == 404:
                 return {}
@@ -88,14 +110,7 @@ class IngressManager(KubernetesResourceManager):
             cls.check_kubernetes_client()
             i: dict = cls.get(GetIngressDataClass(ingress_name=data.ingress_name, namespace_name=data.namespace_name))
             if i:
-                ingress_address = (i.status.load_balancer.ingress[0].ip or 
-                                 i.status.load_balancer.ingress[0].hostname if i.status.load_balancer.ingress else None)
-                return {
-                    'ingress_id': i.metadata.uid,
-                    'ingress_name': i.metadata.name,
-                    'ingress_namespace': i.metadata.namespace,
-                    'ingress_ip': ingress_address,
-                }
+                return i
             # Prepare the ingress manifest
             ingress_manifest = {
                 "apiVersion": "networking.k8s.io/v1",

@@ -27,7 +27,17 @@ class ServiceManager(KubernetesResourceManager):
     def list(cls, data: ListServiceDataClass) -> list[V1Service]:
         try:
             cls.check_kubernetes_client()
-            return cls.client.list_namespaced_service(namespace=data.namespace_name).items
+            return [
+                {
+                    'service_id': service.metadata.uid,
+                    'service_name': service.metadata.name,
+                    'service_namespace': service.metadata.namespace,
+                    'service_ip': service._spec.cluster_ip,
+                    'service_target_port': service._spec.ports[0].target_port,
+                    'service_port': service._spec.ports[0].port,
+                }
+                for service in cls.client.list_namespaced_service(namespace=data.namespace_name).items
+            ]
         except ApiException as ae:
             raise ApiException(f'Error occurred while listing services: {str(ae)}') from ae
         except UnsupportedRuntimeEnvironment as ure:
@@ -39,7 +49,15 @@ class ServiceManager(KubernetesResourceManager):
     def get(cls, data: GetServiceDataClass) -> V1Service:
         try:
             cls.check_kubernetes_client()
-            return cls.client.read_namespaced_service(name=data.service_name, namespace=data.namespace_name)
+            response: V1Service = cls.client.read_namespaced_service(name=data.service_name, namespace=data.namespace_name)
+            return {
+                'service_id': response.metadata.uid,
+                'service_name': response.metadata.name,
+                'service_namespace': response.metadata.namespace,
+                'service_ip': response._spec.cluster_ip,
+                'service_target_port': response._spec.ports[0].target_port,
+                'service_port': response._spec.ports[0].port,
+            }
         except ApiException as ae:
             if ae.status == 404:
                 return {}
@@ -70,14 +88,7 @@ class ServiceManager(KubernetesResourceManager):
             # check for existing services
             s: dict = cls.get(GetServiceDataClass(**{'namespace_name': data.namespace_name, 'service_name': data.service_name}))
             if s:
-                return {
-                    'service_id': s.metadata.uid,
-                    'service_name': s.metadata.name,
-                    'service_namespace': s.metadata.namespace,
-                    'service_ip': s._spec.cluster_ip,
-                    'service_target_port': s._spec.ports[0].target_port,
-                    'service_port': s._spec.ports[0].port,
-                }
+                return s
 
             # create the service manifest
             service_manifest: V1Service = V1Service(
@@ -123,13 +134,8 @@ class ServiceManager(KubernetesResourceManager):
     def poll_termination(cls, namespace_name: str, service_name: str, timeout_seconds: float = 2.0) -> None:
         is_terminated: bool = False
         while is_terminated != True:
-            services: list[dict] = cls.list(ListServiceDataClass(**{'namespace_name': namespace_name}))
-            found: bool = False
-            for service in services:
-                if service.metadata.name == service_name:
-                    found = True
-                    break
-            is_terminated = not found
+            service: dict = cls.get(GetServiceDataClass(**{'namespace_name': namespace_name, 'service_name': service_name}))
+            is_terminated = (service == {})
             print(f'Service: {service_name} Deleted:', is_terminated)
             time.sleep(timeout_seconds)
 

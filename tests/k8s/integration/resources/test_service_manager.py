@@ -86,10 +86,22 @@ class TestServiceManager(TestCase):
         # create first service
         first_service: dict = ServiceManager.create(self.create_service_data)
         first_uid: str = first_service['service_id']
+        # verify service properties
+        self.assertEqual(first_service['service_name'], self.service_name)
+        self.assertEqual(first_service['service_namespace'], self.namespace_name)
+        self.assertEqual(first_service['service_port'], self.service_port)
+        self.assertEqual(first_service['service_target_port'], list(self.target_ports)[0])
+        self.assertEqual(first_service['service_ip'] is not None, True)
 
         # create second service
         second_service: dict = ServiceManager.create(self.create_service_data)
         second_uid: str = second_service['service_id']
+        # verify service properties
+        self.assertEqual(second_service['service_name'], self.service_name)
+        self.assertEqual(second_service['service_namespace'], self.namespace_name)
+        self.assertEqual(second_service['service_port'], self.service_port)
+        self.assertEqual(second_service['service_target_port'], list(self.target_ports)[0])
+        self.assertEqual(second_service['service_ip'] is not None, True)
 
         # verify that the services are the same
         self.assertEqual(first_uid, second_uid)

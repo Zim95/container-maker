@@ -24,9 +24,9 @@ class TestNamespaceManager(TestCase):
         namespaces: list[dict] = NamespaceManager.list()
 
         # assert
-        assert namespace.metadata.name == dummy_namespace
+        assert namespace['namespace_name'] == dummy_namespace
         assert len(initial_namespaces) + 1 == len(namespaces)
-        assert dummy_namespace in [namespace.metadata.name for namespace in namespaces]
+        assert dummy_namespace in [ns['namespace_name'] for ns in namespaces]
 
         # remove the namespace
         deleted_namespace: dict = NamespaceManager.delete(DeleteNamespaceDataClass(**{'namespace_name': dummy_namespace}))
@@ -41,17 +41,17 @@ class TestNamespaceManager(TestCase):
 
         # create a namespace
         namespace_first: dict = NamespaceManager.create(CreateNamespaceDataClass(**{'namespace_name': dummy_namespace}))
-        assert namespace_first.metadata.name == dummy_namespace
+        assert namespace_first['namespace_name'] == dummy_namespace
         namespaces_first: list[dict] = NamespaceManager.list()
 
         # create the same namespace
         namespace_second: dict = NamespaceManager.create(CreateNamespaceDataClass(**{'namespace_name': dummy_namespace}))
-        assert namespace_second.metadata.name == dummy_namespace
+        assert namespace_second['namespace_name'] == dummy_namespace
         namespaces_second: list[dict] = NamespaceManager.list()
         # assert
 
         assert len(namespaces_first) == len(namespaces_second)
-        assert dummy_namespace in [namespace.metadata.name for namespace in namespaces_first]
+        assert dummy_namespace in [ns['namespace_name'] for ns in namespaces_first]
 
         # remove the namespace
         deleted_namespace: dict = NamespaceManager.delete(DeleteNamespaceDataClass(**{'namespace_name': dummy_namespace}))

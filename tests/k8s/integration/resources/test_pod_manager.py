@@ -102,11 +102,12 @@ class TestPodManager(TestCase):
         # Create first pod and get its UID
         first_pod = PodManager.create(self.create_pod_data)
         first_uid = first_pod['pod_id']
+        self.assertEqual(first_pod['pod_ip'] is not None, True)
         
         # Try to create "duplicate" pod
         second_pod = PodManager.create(self.create_pod_data)
         second_uid = second_pod['pod_id']
-        
+        self.assertEqual(second_pod['pod_ip'] is not None, True)
         # Verify it's the same pod (ids should match)
         assert first_uid == second_uid
         

@@ -102,13 +102,16 @@ class TestIngressManager(TestCase):
         # create first ingress and wait for IP
         first_ingress: dict = IngressManager.create(self.ingress_data)
         first_uid: str = first_ingress['ingress_id']
+        self.assertIsNotNone(first_ingress['ingress_ip'])
 
         # create second ingress
         second_ingress: dict = IngressManager.create(self.ingress_data)
         second_uid: str = second_ingress['ingress_id']
+        self.assertIsNotNone(second_ingress['ingress_ip'])
 
         # verify that the ingress are the same
         self.assertEqual(first_uid, second_uid)
+        self.assertEqual(first_ingress['ingress_ip'], second_ingress['ingress_ip'])
 
         # verify that only one ingress exists
         self.assertEqual(len(IngressManager.list(ListIngressDataClass(namespace_name=self.namespace_name))), 1)
