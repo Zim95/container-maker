@@ -1,29 +1,13 @@
 class UnsupportedRuntimeEnvironment(Exception):
     """
-    When unsupported container environment is provided.
+    When there is a mismatch between the runtime environment and the resource manager used.
+    For example, using a Kubernetes resource manager on a Docker runtime environment.
     """
     pass
 
 
-class ContainerManagerNotFound(Exception):
+class ResourceManagerNotFound(Exception):
     """
-    When environment is supported but container manager
-    for that environment is not yet assigned.
-    """
-    pass
-
-
-class ContainerIpUnresolved(Exception):
-    """
-    When container ip address cannot be resolved when starting a container.
-    """
-    pass
-
-
-class ContainerClientNotResolved(Exception):
-    """
-    When container client is None.
-    This happens when methods of the wrong container manager are called.
-    from a different runtime environment.
+    When resource manager for the runtime environment is not found.
     """
     pass

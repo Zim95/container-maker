@@ -5,7 +5,7 @@ from abc import abstractmethod
 from src.resources.dataclasses import GetResourceDataClass, ListResourceDataClass
 from src.resources.dataclasses import CreateResourceDataClass
 from src.resources.dataclasses import DeleteResourceDataClass
-from src.resources.resource_utils import get_runtime_environment
+from src.common.utils import get_runtime_environment
 from src.common.exceptions import UnsupportedRuntimeEnvironment
 
 # third party
@@ -87,3 +87,7 @@ class KubernetesResourceManager(ResourceManager):
                 f"The code is not running on Kubernetes. {cls.__name__} is only implemented for Kubernetes."
             )
             raise UnsupportedRuntimeEnvironment(client_is_none)
+
+
+class DockerResourceManager(ResourceManager):
+    pass
