@@ -141,5 +141,6 @@ class ZZZ_Cleanup(TestCase):
         Delete the namespace.
         '''
         print('Cleanup: test_cleanup')
-        NamespaceManager.delete(DeleteNamespaceDataClass(**{'namespace_name': NAMESPACE_NAME}))
         PodManager.delete(DeletePodDataClass(**{'namespace_name': NAMESPACE_NAME, 'pod_name': POD_NAME}))
+        NamespaceManager.delete(DeleteNamespaceDataClass(**{'namespace_name': NAMESPACE_NAME}))
+

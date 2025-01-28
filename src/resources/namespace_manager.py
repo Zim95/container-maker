@@ -1,4 +1,5 @@
 # modules
+import time
 from src.resources.dataclasses.namespace.get_namespace_dataclass import GetNamespaceDataClass
 from src.resources import KubernetesResourceManager
 from src.resources.dataclasses.namespace.create_namespace_dataclass import CreateNamespaceDataClass
@@ -70,7 +71,7 @@ class NamespaceManager(KubernetesResourceManager):
             )
             cls.client.create_namespace(namespace)
             network_policy: V1NetworkPolicy = V1NetworkPolicy(
-                metadata={"name": "deny-from-other-namespaces"},
+                metadata=V1ObjectMeta(name=data.namespace_name),
                 spec={
                     "podSelector": {},
                     "policyTypes": ["Ingress"],
@@ -87,6 +88,18 @@ class NamespaceManager(KubernetesResourceManager):
             raise Exception(f'Unkown error occured: {str(e)}') from e
 
     @classmethod
+    def poll_termination(cls, namespace_name: str, timeout_seconds: float = 2.0) -> None:
+        '''
+        Poll the termination of a namespace.
+        '''
+        is_terminated: bool = False
+        while is_terminated != True:
+            ns: dict = cls.get(GetNamespaceDataClass(namespace_name=namespace_name))
+            is_terminated = (ns == {})
+            print(f'Namespace: {namespace_name} Deleted:', is_terminated)
+            time.sleep(timeout_seconds)
+
+    @classmethod
     def delete(cls, data: DeleteNamespaceDataClass) -> dict:
         '''
         Delete a namespace.
@@ -97,6 +110,7 @@ class NamespaceManager(KubernetesResourceManager):
             cls.check_kubernetes_client()
             # Call Kubernetes API to delete the namespace
             deletion_response = cls.client.delete_namespace(data.namespace_name)
+            cls.poll_termination(data.namespace_name)
             return {"status": "success", "message": f"Namespace '{data.namespace_name}' deleted.", "details": deletion_response.to_dict()}
         except ApiException as ae:
             raise ApiException(f"Error occurred while deleting namespace '{data.namespace_name}': {str(ae)}") from ae

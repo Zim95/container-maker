@@ -24,7 +24,7 @@ class TestNamespaceManager(TestCase):
         namespaces: list[dict] = NamespaceManager.list()
 
         # assert
-        assert namespace.metadata.namespace == dummy_namespace
+        assert namespace.metadata.name == dummy_namespace
         assert len(initial_namespaces) + 1 == len(namespaces)
         assert dummy_namespace in [namespace.metadata.name for namespace in namespaces]
 
