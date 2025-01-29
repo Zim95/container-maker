@@ -5,7 +5,6 @@ import time
 # modules
 from src.resources.dataclasses.ingress.create_ingress_dataclass import CreateIngressDataClass
 from src.resources.dataclasses.ingress.delete_ingress_dataclass import DeleteIngressDataClass
-from src.resources.dataclasses.ingress.get_ingress_dataclass import GetIngressDataClass
 from src.resources.dataclasses.ingress.list_ingress_dataclass import ListIngressDataClass
 from src.resources.dataclasses.namespace.create_namespace_dataclass import CreateNamespaceDataClass
 from src.resources.dataclasses.namespace.delete_namespace_dataclass import DeleteNamespaceDataClass
@@ -20,7 +19,8 @@ from src.resources.service_manager import ServiceManager
 
 '''
 NOTE:
-Since ingress ip would be an ip outside the cluster, we cannot test ssh into the ingress from within the cluster.
+Since ingress ip would be an ip outside the cluster, we cannot test ssh or connect-websocket into the ingress from within the cluster.
+This test has to be done from outside the cluster.
 '''
 
 

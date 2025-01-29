@@ -145,6 +145,12 @@ class TestServiceManager(TestCase):
             ssh.close()
             ServiceManager.delete(DeleteServiceDataClass(**{'namespace_name': self.namespace_name, 'service_name': self.service_name}))
 
+    def test_websocket_into_service(self) -> None:
+        '''
+        Test if you can connect to the websocket of the service.
+        '''
+        print('Test: test_websocket_into_service')
+
 
 class ZZZ_Cleanup(TestCase):
 

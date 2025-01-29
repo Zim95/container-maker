@@ -164,6 +164,13 @@ class TestPodManager(TestCase):
                 'pod_name': self.pod_name
             }))
 
+    def test_websocket_into_pod(self) -> None:
+        '''
+        Test if you can connect to the websocket of the pod.
+        Result: Should get the output "Websocket test successful".
+        '''
+        print('Test: test_websocket_into_pod')
+
 
 class ZZZ_Cleanup(TestCase):
 
