@@ -8,12 +8,15 @@ from src.resources.dataclasses.ingress.get_ingress_dataclass import GetIngressDa
 from src.resources.dataclasses.ingress.list_ingress_dataclass import ListIngressDataClass
 from src.resources import KubernetesResourceManager
 from src.common.exceptions import UnsupportedRuntimeEnvironment
+from src.resources.dataclasses.service.list_service_dataclass import ListServiceDataClass
 from src.resources.resource_config import INGRESS_IP_TIMEOUT_SECONDS
 
 # third party
 from kubernetes.client.rest import ApiException
 from kubernetes.client.models import V1Ingress
 from kubernetes.client import NetworkingV1Api
+
+from src.resources.service_manager import ServiceManager
 
 
 class IngressManager(KubernetesResourceManager):
@@ -29,6 +32,22 @@ class IngressManager(KubernetesResourceManager):
         '''
         super().check_kubernetes_client()
         cls.client = NetworkingV1Api()
+
+    @classmethod
+    def get_associated_services(cls, ingress: dict) -> list[dict]:
+        '''
+        Get associated services for an ingress.
+        '''
+        services: list = ServiceManager.list(ListServiceDataClass(**{'namespace_name': ingress.get('metadata', {}).get('namespace', '')}))
+        return [
+            service
+            for service in services
+            if service['service_name'] in [
+                rule.get('http', {}).get('paths', [{}])[0].get(
+                    'backend', {}).get('service', {}).get('name')
+                for rule in ingress.get('spec', {}).get('rules', [])
+            ]
+        ]
 
     @classmethod
     def list(cls, data: ListIngressDataClass) -> list[dict]:
@@ -47,6 +66,7 @@ class IngressManager(KubernetesResourceManager):
                         ingress.status.load_balancer.ingress[0].hostname
                         if ingress.status.load_balancer.ingress else None
                     ),
+                    'associated_services': cls.get_associated_services(ingress.to_dict()),
                 }
                 for ingress in cls.client.list_namespaced_ingress(data.namespace_name).items
             ]
@@ -74,6 +94,7 @@ class IngressManager(KubernetesResourceManager):
                     response.status.load_balancer.ingress[0].hostname
                     if response.status.load_balancer.ingress else None
                 ),
+                'associated_services': cls.get_associated_services(response.to_dict()),
             }
         except ApiException as ae:
             if ae.status == 404:
@@ -165,6 +186,7 @@ class IngressManager(KubernetesResourceManager):
                 'ingress_name': ingress.metadata.name,
                 'ingress_namespace': ingress.metadata.namespace,
                 'ingress_ip': cls.get_ingress_ip(data.namespace_name, data.ingress_name),
+                'associated_services': cls.get_associated_services(ingress.to_dict()),
             }
         except ApiException as ae:
             raise ApiException(f'Error occured while creating ingress: {str(ae)}') from ae

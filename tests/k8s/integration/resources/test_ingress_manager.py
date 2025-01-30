@@ -88,6 +88,7 @@ class TestIngressManager(TestCase):
         self.assertEqual(ingress['ingress_name'], self.ingress_name)
         self.assertEqual(ingress['ingress_namespace'], self.namespace_name)
         self.assertIsNotNone(ingress['ingress_ip'])
+        self.assertEqual(len(ingress['associated_services']), 1)
 
         # list all ingress
         ingress_list_new: list = IngressManager.list(ListIngressDataClass(namespace_name=self.namespace_name))
@@ -103,12 +104,12 @@ class TestIngressManager(TestCase):
         first_ingress: dict = IngressManager.create(self.ingress_data)
         first_uid: str = first_ingress['ingress_id']
         self.assertIsNotNone(first_ingress['ingress_ip'])
-
+        self.assertEqual(len(first_ingress['associated_services']), 1)
         # create second ingress
         second_ingress: dict = IngressManager.create(self.ingress_data)
         second_uid: str = second_ingress['ingress_id']
         self.assertIsNotNone(second_ingress['ingress_ip'])
-
+        self.assertEqual(len(second_ingress['associated_services']), 1)
         # verify that the ingress are the same
         self.assertEqual(first_uid, second_uid)
         self.assertEqual(first_ingress['ingress_ip'], second_ingress['ingress_ip'])

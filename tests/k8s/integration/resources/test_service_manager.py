@@ -23,6 +23,7 @@ import paramiko
 NAMESPACE_NAME: str = 'test-service-manager'
 POD_NAME: str = 'test-ssh-pod'
 
+
 class TestServiceManager(TestCase):
     def setUp(self) -> None:
         print('Setup: setUp')
@@ -69,6 +70,8 @@ class TestServiceManager(TestCase):
         self.assertEqual(service['service_port'], self.service_port)
         self.assertEqual(service['service_target_port'], list(self.target_ports)[0])
         self.assertEqual(service['service_ip'] is not None, True)
+        self.assertEqual(len(service['associated_pods']), 1)
+
         # delete the service
         ServiceManager.delete(DeleteServiceDataClass(**{'namespace_name': self.namespace_name, 'service_name': self.service_name}))
 
@@ -92,7 +95,7 @@ class TestServiceManager(TestCase):
         self.assertEqual(first_service['service_port'], self.service_port)
         self.assertEqual(first_service['service_target_port'], list(self.target_ports)[0])
         self.assertEqual(first_service['service_ip'] is not None, True)
-
+        self.assertEqual(len(first_service['associated_pods']), 1)
         # create second service
         second_service: dict = ServiceManager.create(self.create_service_data)
         second_uid: str = second_service['service_id']
@@ -102,7 +105,7 @@ class TestServiceManager(TestCase):
         self.assertEqual(second_service['service_port'], self.service_port)
         self.assertEqual(second_service['service_target_port'], list(self.target_ports)[0])
         self.assertEqual(second_service['service_ip'] is not None, True)
-
+        self.assertEqual(len(second_service['associated_pods']), 1)
         # verify that the services are the same
         self.assertEqual(first_uid, second_uid)
 

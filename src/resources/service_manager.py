@@ -2,12 +2,14 @@
 import time
 
 # modules
+from src.resources.dataclasses.pod.list_pod_dataclass import ListPodDataClass
 from src.resources.dataclasses.service.delete_service_dataclass import DeleteServiceDataClass
 from src.resources.dataclasses.service.create_service_dataclass import CreateServiceDataClass
 from src.resources.dataclasses.service.get_service_dataclass import GetServiceDataClass
 from src.resources.dataclasses.service.list_service_dataclass import ListServiceDataClass
 from src.resources import KubernetesResourceManager
 from src.common.exceptions import UnsupportedRuntimeEnvironment
+from src.resources.pod_manager import PodManager
 from src.resources.resource_config import SERVICE_IP_TIMEOUT_SECONDS
 
 # third party
@@ -24,6 +26,19 @@ class ServiceManager(KubernetesResourceManager):
     '''
 
     @classmethod
+    def get_associated_pods(cls, service: dict) -> list[dict]:
+        '''
+        Get associated pods for a service by matching the service's selector labels
+        with pod labels.
+        '''
+        pods: list = PodManager.list(ListPodDataClass(**{'namespace_name': service.get('metadata', {}).get('namespace', '')}))
+        service_selector = service.get('spec', {}).get('selector', {})
+        return [
+            pod for pod in pods
+            if pod.get('pod_name') == service_selector.get('app', '')
+        ]
+
+    @classmethod
     def list(cls, data: ListServiceDataClass) -> list[V1Service]:
         try:
             cls.check_kubernetes_client()
@@ -35,6 +50,7 @@ class ServiceManager(KubernetesResourceManager):
                     'service_ip': service._spec.cluster_ip,
                     'service_target_port': service._spec.ports[0].target_port,
                     'service_port': service._spec.ports[0].port,
+                    'associated_pods': cls.get_associated_pods(service.to_dict()),
                 }
                 for service in cls.client.list_namespaced_service(namespace=data.namespace_name).items
             ]
@@ -57,6 +73,7 @@ class ServiceManager(KubernetesResourceManager):
                 'service_ip': response._spec.cluster_ip,
                 'service_target_port': response._spec.ports[0].target_port,
                 'service_port': response._spec.ports[0].port,
+                'associated_pods': cls.get_associated_pods(response.to_dict()),
             }
         except ApiException as ae:
             if ae.status == 404:
@@ -122,6 +139,7 @@ class ServiceManager(KubernetesResourceManager):
                 "service_namespace": service.metadata.namespace,
                 "service_target_port": service._spec.ports[0].target_port,
                 "service_port": service._spec.ports[0].port,
+                "associated_pods": cls.get_associated_pods(service.to_dict()),
             }
         except ApiException as ae:
             raise ApiException(f'Error occurred while creating service: {str(ae)}') from ae
