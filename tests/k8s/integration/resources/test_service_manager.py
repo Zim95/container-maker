@@ -7,7 +7,7 @@ from src.resources.dataclasses.service.get_service_dataclass import GetServiceDa
 from src.resources.service_manager import ServiceManager
 from src.resources.pod_manager import PodManager
 from src.resources.namespace_manager import NamespaceManager
-from src.resources.dataclasses.service.create_service_dataclass import CreateServiceDataClass
+from src.resources.dataclasses.service.create_service_dataclass import CreateServiceDataClass, ServiceType
 from src.resources.dataclasses.service.delete_service_dataclass import DeleteServiceDataClass
 from src.resources.dataclasses.service.list_service_dataclass import ListServiceDataClass
 from src.resources.dataclasses.pod.create_pod_dataclass import CreatePodDataClass
@@ -70,7 +70,7 @@ class TestServiceManager(TestCase):
         self.assertEqual(len(service['service_ports']), 1)  # since we have only 1 service port.
         self.assertEqual(service['service_ip'] is not None, True)
         self.assertEqual(len(service['associated_pods']), 1)
-
+        self.assertEqual(service['service_type'], ServiceType.LOAD_BALANCER.value)
         # delete the service
         ServiceManager.delete(DeleteServiceDataClass(**{'namespace_name': self.namespace_name, 'service_name': self.service_name}))
 
@@ -94,6 +94,7 @@ class TestServiceManager(TestCase):
         self.assertEqual(len(first_service['service_ports']), 1)  # since we have only 1 service port.
         self.assertEqual(first_service['service_ip'] is not None, True)
         self.assertEqual(len(first_service['associated_pods']), 1)
+        self.assertEqual(first_service['service_type'], ServiceType.LOAD_BALANCER.value)
         # create second service
         second_service: dict = ServiceManager.create(self.create_service_data)
         second_uid: str = second_service['service_id']
@@ -103,11 +104,60 @@ class TestServiceManager(TestCase):
         self.assertEqual(len(second_service['service_ports']), 1)  # since we have only 1 service port.
         self.assertEqual(second_service['service_ip'] is not None, True)
         self.assertEqual(len(second_service['associated_pods']), 1)
+        self.assertEqual(second_service['service_type'], ServiceType.LOAD_BALANCER.value)
         # verify that the services are the same
         self.assertEqual(first_uid, second_uid)
 
         # verify that only one service exists
         self.assertEqual(len(ServiceManager.list(ListServiceDataClass(**{'namespace_name': self.namespace_name}))), 1)
+
+        # cleanup
+        ServiceManager.delete(DeleteServiceDataClass(**{'namespace_name': self.namespace_name, 'service_name': self.service_name}))
+
+        # verify service deletion
+        service_deleted: dict = ServiceManager.get(GetServiceDataClass(**{'namespace_name': self.namespace_name, 'service_name': self.service_name}))
+        self.assertEqual(service_deleted, {})
+
+    def test_node_port_service_creation(self) -> None:
+        '''
+        Test the creation of a NodePort service.
+        '''
+        print('Test: test_node_port_service_creation')
+
+        # create a service
+        self.create_service_data.service_type = ServiceType.NODE_PORT
+        service: dict = ServiceManager.create(self.create_service_data)
+        # verify service properties
+        self.assertEqual(service['service_name'], self.service_name)
+        self.assertEqual(service['service_namespace'], self.namespace_name)
+        self.assertEqual(len(service['service_ports']), 1)  # since we have only 1 service port.
+        self.assertEqual(service['service_ip'] is not None, True)
+        self.assertEqual(len(service['associated_pods']), 1)
+        self.assertEqual(service['service_type'], ServiceType.NODE_PORT.value)
+
+        # cleanup
+        ServiceManager.delete(DeleteServiceDataClass(**{'namespace_name': self.namespace_name, 'service_name': self.service_name}))
+
+        # verify service deletion
+        service_deleted: dict = ServiceManager.get(GetServiceDataClass(**{'namespace_name': self.namespace_name, 'service_name': self.service_name}))
+        self.assertEqual(service_deleted, {})
+
+    def test_cluster_ip_service_creation(self) -> None:
+        '''
+        Test the creation of a ClusterIP service.
+        '''
+        print('Test: test_cluster_ip_service_creation')
+
+        # create a service
+        self.create_service_data.service_type = ServiceType.CLUSTER_IP
+        service: dict = ServiceManager.create(self.create_service_data)
+        # verify service properties
+        self.assertEqual(service['service_name'], self.service_name)
+        self.assertEqual(service['service_namespace'], self.namespace_name)
+        self.assertEqual(len(service['service_ports']), 1)  # since we have only 1 service port.
+        self.assertEqual(service['service_ip'] is not None, True)
+        self.assertEqual(len(service['associated_pods']), 1)
+        self.assertEqual(service['service_type'], ServiceType.CLUSTER_IP.value)
 
         # cleanup
         ServiceManager.delete(DeleteServiceDataClass(**{'namespace_name': self.namespace_name, 'service_name': self.service_name}))

@@ -4,7 +4,7 @@ import time
 # modules
 from src.resources.dataclasses.pod.list_pod_dataclass import ListPodDataClass
 from src.resources.dataclasses.service.delete_service_dataclass import DeleteServiceDataClass
-from src.resources.dataclasses.service.create_service_dataclass import CreateServiceDataClass
+from src.resources.dataclasses.service.create_service_dataclass import CreateServiceDataClass, ServiceType
 from src.resources.dataclasses.service.get_service_dataclass import GetServiceDataClass
 from src.resources.dataclasses.service.list_service_dataclass import ListServiceDataClass
 from src.resources import KubernetesResourceManager
@@ -66,6 +66,7 @@ class ServiceManager(KubernetesResourceManager):
                     'service_namespace': service.metadata.namespace,
                     'service_ip': service._spec.cluster_ip,
                     'service_ports': cls.get_service_ports(service),
+                    'service_type': service.spec.type,
                     'associated_pods': cls.get_associated_pods(service.to_dict()),
                 }
                 for service in cls.client.list_namespaced_service(namespace=data.namespace_name).items
@@ -88,6 +89,7 @@ class ServiceManager(KubernetesResourceManager):
                 'service_namespace': response.metadata.namespace,
                 'service_ip': response._spec.cluster_ip,
                 'service_ports': cls.get_service_ports(response),
+                'service_type': response.spec.type,
                 'associated_pods': cls.get_associated_pods(response.to_dict()),
             }
         except ApiException as ae:
@@ -126,11 +128,6 @@ class ServiceManager(KubernetesResourceManager):
             service_manifest: V1Service = V1Service(
                 metadata=V1ObjectMeta(
                     name=data.service_name,
-                    annotations={
-                        "nginx.org/websocket-services": data.service_name,  # for websockets
-                        "nginx.ingress.kubernetes.io/proxy-read-timeout": "3600",  # for websockets
-                        "nginx.ingress.kubernetes.io/proxy-send-timeout": "3600"  # for websockets
-                    }
                 ),
                 spec=V1ServiceSpec(
                     selector={"app": data.pod_name},
@@ -138,10 +135,11 @@ class ServiceManager(KubernetesResourceManager):
                         V1ServicePort(
                             port=data.service_port,
                             target_port=data.target_port,
-                            protocol=data.protocol
+                            protocol=data.protocol,
+                            node_port=data.node_port if data.service_type == ServiceType.NODE_PORT else None
                         )
                     ],
-                    type="LoadBalancer"
+                    type=data.service_type.value if data.service_type else ServiceType.LOAD_BALANCER.value
                 )
             )
             # create the service
@@ -153,6 +151,7 @@ class ServiceManager(KubernetesResourceManager):
                 "service_name": service.metadata.name,
                 "service_namespace": service.metadata.namespace,
                 "service_ports": cls.get_service_ports(service),
+                "service_type": service.spec.type,
                 "associated_pods": cls.get_associated_pods(service.to_dict()),
             }
         except ApiException as ae:
