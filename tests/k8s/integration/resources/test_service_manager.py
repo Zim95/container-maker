@@ -67,8 +67,7 @@ class TestServiceManager(TestCase):
         # verify service properties
         self.assertEqual(service['service_name'], self.service_name)
         self.assertEqual(service['service_namespace'], self.namespace_name)
-        self.assertEqual(service['service_port'], self.service_port)
-        self.assertEqual(service['service_target_port'], list(self.target_ports)[0])
+        self.assertEqual(len(service['service_ports']), 1)  # since we have only 1 service port.
         self.assertEqual(service['service_ip'] is not None, True)
         self.assertEqual(len(service['associated_pods']), 1)
 
@@ -92,8 +91,7 @@ class TestServiceManager(TestCase):
         # verify service properties
         self.assertEqual(first_service['service_name'], self.service_name)
         self.assertEqual(first_service['service_namespace'], self.namespace_name)
-        self.assertEqual(first_service['service_port'], self.service_port)
-        self.assertEqual(first_service['service_target_port'], list(self.target_ports)[0])
+        self.assertEqual(len(first_service['service_ports']), 1)  # since we have only 1 service port.
         self.assertEqual(first_service['service_ip'] is not None, True)
         self.assertEqual(len(first_service['associated_pods']), 1)
         # create second service
@@ -102,8 +100,7 @@ class TestServiceManager(TestCase):
         # verify service properties
         self.assertEqual(second_service['service_name'], self.service_name)
         self.assertEqual(second_service['service_namespace'], self.namespace_name)
-        self.assertEqual(second_service['service_port'], self.service_port)
-        self.assertEqual(second_service['service_target_port'], list(self.target_ports)[0])
+        self.assertEqual(len(second_service['service_ports']), 1)  # since we have only 1 service port.
         self.assertEqual(second_service['service_ip'] is not None, True)
         self.assertEqual(len(second_service['associated_pods']), 1)
         # verify that the services are the same

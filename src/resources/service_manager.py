@@ -32,11 +32,28 @@ class ServiceManager(KubernetesResourceManager):
         with pod labels.
         '''
         pods: list = PodManager.list(ListPodDataClass(**{'namespace_name': service.get('metadata', {}).get('namespace', '')}))
-        service_selector = service.get('spec', {}).get('selector', {})
+        service_selector: dict = service.get('spec', {}).get('selector', {})
+        if not service_selector:
+            return []
         return [
             pod for pod in pods
-            if pod.get('pod_name') == service_selector.get('app', '')
+            if all(
+                pod.get('pod_labels', {}).get(key) == value
+                for key, value in service_selector.items()
+            )
         ]
+
+    @classmethod
+    def get_service_ports(cls, service: V1Service) -> list[dict]:
+        """Get all ports from a service"""
+        ports: list[dict] = []
+        for port in service._spec.ports:
+            ports.append({
+                'name': port.name, # Optional port name
+                'container_port': port.port, # The service port will be the container port
+                'protocol': port.protocol # TCP/UDP
+            })
+        return ports
 
     @classmethod
     def list(cls, data: ListServiceDataClass) -> list[V1Service]:
@@ -48,8 +65,7 @@ class ServiceManager(KubernetesResourceManager):
                     'service_name': service.metadata.name,
                     'service_namespace': service.metadata.namespace,
                     'service_ip': service._spec.cluster_ip,
-                    'service_target_port': service._spec.ports[0].target_port,
-                    'service_port': service._spec.ports[0].port,
+                    'service_ports': cls.get_service_ports(service),
                     'associated_pods': cls.get_associated_pods(service.to_dict()),
                 }
                 for service in cls.client.list_namespaced_service(namespace=data.namespace_name).items
@@ -71,8 +87,7 @@ class ServiceManager(KubernetesResourceManager):
                 'service_name': response.metadata.name,
                 'service_namespace': response.metadata.namespace,
                 'service_ip': response._spec.cluster_ip,
-                'service_target_port': response._spec.ports[0].target_port,
-                'service_port': response._spec.ports[0].port,
+                'service_ports': cls.get_service_ports(response),
                 'associated_pods': cls.get_associated_pods(response.to_dict()),
             }
         except ApiException as ae:
@@ -137,8 +152,7 @@ class ServiceManager(KubernetesResourceManager):
                 "service_ip": cls.get_service_ip(data.namespace_name, data.service_name),
                 "service_name": service.metadata.name,
                 "service_namespace": service.metadata.namespace,
-                "service_target_port": service._spec.ports[0].target_port,
-                "service_port": service._spec.ports[0].port,
+                "service_ports": cls.get_service_ports(service),
                 "associated_pods": cls.get_associated_pods(service.to_dict()),
             }
         except ApiException as ae:
@@ -169,4 +183,4 @@ class ServiceManager(KubernetesResourceManager):
         except UnsupportedRuntimeEnvironment as ure:
             raise UnsupportedRuntimeEnvironment(f'Unsupported Runtime Environment: {str(ure)}') from ure
         except Exception as e:
-            raise Exception(f'Unknown error occurred: {str(e)}') from e 
+            raise Exception(f'Unknown error occurred: {str(e)}') from e

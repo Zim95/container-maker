@@ -22,6 +22,21 @@ class PodManager(KubernetesResourceManager):
     '''
     Manage kubernetes pods.
     '''
+    @classmethod
+    def get_pod_ports(cls, pod: V1Pod) -> list[dict]:
+        """
+        Get all ports configured for a pod's containers
+        """
+        ports: list[dict] = []
+        for container in pod.spec.containers:
+            if container.ports:
+                for port in container.ports:
+                    ports.append({
+                        'name': port.name if port.name else None,
+                        'container_port': port.container_port,
+                        'protocol': port.protocol
+                    })
+        return ports
 
     @classmethod
     def list(cls, data: ListPodDataClass) -> list[dict]:
@@ -33,15 +48,17 @@ class PodManager(KubernetesResourceManager):
                     'pod_name': pod.metadata.name,
                     'pod_namespace': pod.metadata.namespace,
                     'pod_ip': pod.status.pod_ip,
+                    'pod_ports': cls.get_pod_ports(pod),
+                    'pod_labels': pod.metadata.labels or {},
                 }
                 for pod in cls.client.list_namespaced_pod(namespace=data.namespace_name).items
             ]
         except ApiException as ae:
-            raise ApiException(f'Error occured while listing pods: {str(ae)}') from ae
+            raise ApiException(f'Error occurred while listing pods: {str(ae)}') from ae
         except UnsupportedRuntimeEnvironment as ure:
-            raise UnsupportedRuntimeEnvironment(f'Unsupported Run time Environment: {str(ure)}') from ure
+            raise UnsupportedRuntimeEnvironment(f'Unsupported Runtime Environment: {str(ure)}') from ure
         except Exception as e:
-            raise Exception(f'Unkown error occured: {str(e)}') from e
+            raise Exception(f'Unknown error occurred: {str(e)}') from e
 
     @classmethod
     def get(cls, data: GetPodDataClass) -> dict:
@@ -58,15 +75,17 @@ class PodManager(KubernetesResourceManager):
                 'pod_name': response.metadata.name,
                 'pod_namespace': response.metadata.namespace,
                 'pod_ip': response.status.pod_ip,
+                'pod_ports': cls.get_pod_ports(response),
+                'pod_labels': response.metadata.labels or {},
             }
         except ApiException as ae:
             if ae.status == 404:
                 return {}
-            raise ApiException(f'Error occured while getting pod: {str(ae)}') from ae
+            raise ApiException(f'Error occurred while getting pod: {str(ae)}') from ae
         except UnsupportedRuntimeEnvironment as ure:
-            raise UnsupportedRuntimeEnvironment(f'Unsupported Run time Environment: {str(ure)}') from ure
+            raise UnsupportedRuntimeEnvironment(f'Unsupported Runtime Environment: {str(ure)}') from ure
         except Exception as e:
-            raise Exception(f'Unkown error occured: {str(e)}') from e
+            raise Exception(f'Unknown error occurred: {str(e)}') from e
 
     @classmethod
     def get_pod_ip(cls, namespace_name: str, pod_name: str, timeout_seconds: float = POD_IP_TIMEOUT_SECONDS) -> str:
@@ -130,6 +149,8 @@ class PodManager(KubernetesResourceManager):
                 "pod_name": pod.metadata.name,
                 "pod_namespace": pod.metadata.namespace,
                 "pod_ip": cls.get_pod_ip(data.namespace_name, data.pod_name),
+                "pod_ports": cls.get_pod_ports(pod),
+                "pod_labels": pod.metadata.labels or {},
             }
         except ApiException as ae:
             raise ApiException(f'Error occured while creating pod: {str(ae)}') from ae

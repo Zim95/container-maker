@@ -8,7 +8,7 @@ from src.resources.dataclasses.ingress.get_ingress_dataclass import GetIngressDa
 from src.resources.dataclasses.ingress.list_ingress_dataclass import ListIngressDataClass
 from src.resources import KubernetesResourceManager
 from src.common.exceptions import UnsupportedRuntimeEnvironment
-from src.resources.dataclasses.service.list_service_dataclass import ListServiceDataClass
+from src.resources.dataclasses.service.get_service_dataclass import GetServiceDataClass
 from src.resources.resource_config import INGRESS_IP_TIMEOUT_SECONDS
 
 # third party
@@ -38,15 +38,37 @@ class IngressManager(KubernetesResourceManager):
         '''
         Get associated services for an ingress.
         '''
-        services: list = ServiceManager.list(ListServiceDataClass(**{'namespace_name': ingress.get('metadata', {}).get('namespace', '')}))
+        namespace = ingress.get('metadata', {}).get('namespace', '')
+        rules = ingress.get('spec', {}).get('rules', [])
+
+        # Explicitly returning for clarity, even though there will be no errors if we continue.
+        if not rules:
+            return []
+
+        # Get all service names from all paths in all rules
+        service_names = [
+            path.get('backend', {}).get('service', {}).get('name')
+            for rule in rules
+            for path in rule.get('http', {}).get('paths', [])
+            if path.get('backend', {}).get('service', {}).get('name')
+        ]
+
+        # Get service details for each service name
         return [
-            service
-            for service in services
-            if service['service_name'] in [
-                rule.get('http', {}).get('paths', [{}])[0].get(
-                    'backend', {}).get('service', {}).get('name')
-                for rule in ingress.get('spec', {}).get('rules', [])
-            ]
+            ServiceManager.get(GetServiceDataClass(
+                namespace_name=namespace,
+                service_name=service_name
+            ))
+            for service_name in service_names
+            if service_name
+        ]
+
+    @classmethod
+    def get_ingress_ports(cls) -> list[dict]:
+        """Get all ports from an ingress"""
+        return [
+            {'name': 'http', 'container_port': 80, 'protocol': 'TCP'},
+            {'name': 'https', 'container_port': 443, 'protocol': 'TCP'},
         ]
 
     @classmethod
@@ -66,6 +88,7 @@ class IngressManager(KubernetesResourceManager):
                         ingress.status.load_balancer.ingress[0].hostname
                         if ingress.status.load_balancer.ingress else None
                     ),
+                    'ingress_ports': cls.get_ingress_ports(),
                     'associated_services': cls.get_associated_services(ingress.to_dict()),
                 }
                 for ingress in cls.client.list_namespaced_ingress(data.namespace_name).items
@@ -94,6 +117,7 @@ class IngressManager(KubernetesResourceManager):
                     response.status.load_balancer.ingress[0].hostname
                     if response.status.load_balancer.ingress else None
                 ),
+                'ingress_ports': cls.get_ingress_ports(),
                 'associated_services': cls.get_associated_services(response.to_dict()),
             }
         except ApiException as ae:
@@ -186,6 +210,7 @@ class IngressManager(KubernetesResourceManager):
                 'ingress_name': ingress.metadata.name,
                 'ingress_namespace': ingress.metadata.namespace,
                 'ingress_ip': cls.get_ingress_ip(data.namespace_name, data.ingress_name),
+                'ingress_ports': cls.get_ingress_ports(),
                 'associated_services': cls.get_associated_services(ingress.to_dict()),
             }
         except ApiException as ae:

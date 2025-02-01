@@ -82,6 +82,8 @@ class TestPodManager(TestCase):
         self.assertEqual(pod['pod_name'], self.pod_name)
         self.assertEqual(pod['pod_namespace'], self.namespace_name)
         self.assertEqual(pod['pod_ip'] is not None, True)
+        self.assertEqual(len(pod['pod_ports']), 2)  # since we have 2 target ports.
+        self.assertEqual(pod['pod_labels'].get('app'), self.pod_name) # we have only one label, the app label which is the pod name.
 
         # list all pods -> should have a list.
         pods_new: list[dict] = PodManager.list(ListPodDataClass(**{'namespace_name': self.namespace_name}))
@@ -103,11 +105,13 @@ class TestPodManager(TestCase):
         first_pod = PodManager.create(self.create_pod_data)
         first_uid = first_pod['pod_id']
         self.assertEqual(first_pod['pod_ip'] is not None, True)
+        self.assertEqual(len(first_pod['pod_ports']), 2)  # since we have 2 target ports.
         
         # Try to create "duplicate" pod
         second_pod = PodManager.create(self.create_pod_data)
         second_uid = second_pod['pod_id']
         self.assertEqual(second_pod['pod_ip'] is not None, True)
+        self.assertEqual(len(second_pod['pod_ports']), 2)  # since we have 2 target ports.
         # Verify it's the same pod (ids should match)
         assert first_uid == second_uid
         
