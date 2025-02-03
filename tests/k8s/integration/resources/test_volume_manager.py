@@ -139,6 +139,7 @@ class TestVolumeManager(TestCase):
 
     def tearDown(self) -> None:
         print('Teardown: test_volume_manager')
+        # adding deletion in teardown is important. Because, even if the test fails in between, the volume is cleanedup.
         VolumeManager.delete(
             DeleteVolumeDataClass(
                 **{'namespace_name': self.namespace_name, 'volume_name': self.create_volume_data.volume_name}
