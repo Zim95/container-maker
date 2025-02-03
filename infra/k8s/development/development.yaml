@@ -5,7 +5,7 @@ metadata:
   name: resources-cluster-role
 rules:
 - apiGroups: ["", "networking.k8s.io"]
-  resources: ["namespaces", "pods", "pods/exec", "networkpolicies", "services", "endpoints", "service/status", "endpoints/status", "configmaps", "secrets", "ingresses"]
+  resources: ["namespaces", "pods", "pods/exec", "networkpolicies", "services", "endpoints", "service/status", "endpoints/status", "configmaps", "secrets", "ingresses", "persistentvolumes", "persistentvolumeclaims"]
   verbs: ["list", "create", "delete", "get"]
 ---
 apiVersion: v1

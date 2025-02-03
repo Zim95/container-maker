@@ -25,4 +25,4 @@ class CreateServiceDataClass(CreateResourceDataClass):
     target_port: int  # port of the pod
     protocol: str  # protocol of the service
     service_type: Optional[ServiceType] = None  # type of the service. Default is LoadBalancer.
-    node_port: Optional[int] = None  # Add this field
+    node_port: Optional[int] = None  #  to hardcode the port for the service.
