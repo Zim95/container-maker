@@ -16,6 +16,9 @@ from kubernetes.client import V1Pod
 from kubernetes.client import V1ObjectMeta
 from kubernetes.client import V1PodSpec
 from kubernetes.client import V1Container
+from kubernetes.client import V1VolumeMount
+from kubernetes.client import V1Volume
+from kubernetes.client import V1PersistentVolumeClaimVolumeSource
 
 
 class PodManager(KubernetesResourceManager):
@@ -39,6 +42,23 @@ class PodManager(KubernetesResourceManager):
         return ports
 
     @classmethod
+    def get_pod_volumes(cls, pod: V1Pod) -> list[str]:
+        """
+        Get all volume names configured for a pod
+        Returns list of volume names (which can be used with VolumeManager.get)
+        """
+        volumes: list[str] = []
+        if pod.spec.volumes:
+            for volume in pod.spec.volumes:
+                if volume.persistent_volume_claim:  # Only include PVC volumes
+                    # Remove '-claim' suffix to get original volume name
+                    volume_name = volume.persistent_volume_claim.claim_name
+                    if volume_name.endswith('-claim'):
+                        volume_name = volume_name[:-6]  # Remove '-claim' suffix
+                    volumes.append(volume_name)
+        return volumes
+
+    @classmethod
     def list(cls, data: ListPodDataClass) -> list[dict]:
         try:
             cls.check_kubernetes_client()
@@ -50,6 +70,7 @@ class PodManager(KubernetesResourceManager):
                     'pod_ip': pod.status.pod_ip,
                     'pod_ports': cls.get_pod_ports(pod),
                     'pod_labels': pod.metadata.labels or {},
+                    'associated_volumes': cls.get_pod_volumes(pod),
                 }
                 for pod in cls.client.list_namespaced_pod(namespace=data.namespace_name).items
             ]
@@ -77,6 +98,7 @@ class PodManager(KubernetesResourceManager):
                 'pod_ip': response.status.pod_ip,
                 'pod_ports': cls.get_pod_ports(response),
                 'pod_labels': response.metadata.labels or {},
+                'associated_volumes': cls.get_pod_volumes(response),
             }
         except ApiException as ae:
             if ae.status == 404:
@@ -131,15 +153,30 @@ class PodManager(KubernetesResourceManager):
                         "nginx.ingress.kubernetes.io/proxy-send-timeout": "3600"  # for websockets
                     }
                 ),
-                spec=V1PodSpec(
+                spec=V1PodSpec(                    
+                    # Main container
                     containers=[
                         V1Container(
                             name=data.pod_name,
                             image=data.image_name,
                             ports=target_ports,
                             env=environment_variables,
+                            volume_mounts=[
+                                V1VolumeMount(
+                                    name=data.volume_config['volume']['volume_name'],
+                                    mount_path=f"{data.pod_name}-data"
+                                )
+                            ] if data.volume_config else None,
                         )
-                    ]
+                    ],
+                    volumes=[
+                        V1Volume(
+                            name=data.volume_config['volume']['volume_name'],
+                            persistent_volume_claim=V1PersistentVolumeClaimVolumeSource(
+                                claim_name=data.volume_config['claim']['claim_name']
+                            )
+                        )
+                    ] if data.volume_config else None
                 )
             )
             # create the actual pod
@@ -151,6 +188,7 @@ class PodManager(KubernetesResourceManager):
                 "pod_ip": cls.get_pod_ip(data.namespace_name, data.pod_name),
                 "pod_ports": cls.get_pod_ports(pod),
                 "pod_labels": pod.metadata.labels or {},
+                "associated_volumes": cls.get_pod_volumes(pod),
             }
         except ApiException as ae:
             raise ApiException(f'Error occured while creating pod: {str(ae)}') from ae

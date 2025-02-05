@@ -129,6 +129,7 @@ class VolumeManager(KubernetesResourceManager):
                         },
                         "accessModes": [mode.value for mode in data.access_modes],
                         "persistentVolumeReclaimPolicy": data.reclaim_policy.value,
+                        "storageClassName": "hostpath",
                         "hostPath": {
                             "path": data.host_path
                         }
@@ -162,6 +163,7 @@ class VolumeManager(KubernetesResourceManager):
                                 "storage": data.storage_size
                             }
                         },
+                        "storageClassName": "hostpath",
                         "volumeName": data.volume_name
                     }
                 )
