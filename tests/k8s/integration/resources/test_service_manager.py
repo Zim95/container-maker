@@ -7,7 +7,7 @@ from src.resources.dataclasses.service.get_service_dataclass import GetServiceDa
 from src.resources.service_manager import ServiceManager
 from src.resources.pod_manager import PodManager
 from src.resources.namespace_manager import NamespaceManager
-from src.resources.dataclasses.service.create_service_dataclass import CreateServiceDataClass, ServiceType
+from src.resources.dataclasses.service.create_service_dataclass import CreateServiceDataClass, PublishInformationDataClass, ServiceType
 from src.resources.dataclasses.service.delete_service_dataclass import DeleteServiceDataClass
 from src.resources.dataclasses.service.list_service_dataclass import ListServiceDataClass
 from src.resources.dataclasses.pod.create_pod_dataclass import CreatePodDataClass
@@ -48,9 +48,13 @@ class TestServiceManager(TestCase):
             service_name=self.service_name,
             pod_name=self.pod_name,
             namespace_name=self.namespace_name,
-            service_port=self.service_port,
-            target_port=list(self.target_ports)[0], # take any one of the target ports
-            protocol=self.protocol
+            publish_information=[
+                PublishInformationDataClass(
+                    publish_port=self.service_port,
+                    target_port=list(self.target_ports)[0],
+                    protocol=self.protocol
+                )
+            ]
         )
         NamespaceManager.create(CreateNamespaceDataClass(**{'namespace_name': self.namespace_name}))
         PodManager.create(self.create_pod_data)

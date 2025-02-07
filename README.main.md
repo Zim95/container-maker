@@ -1,5 +1,10 @@
-# container-maker
-API to create, list, delete and update containers in different container environments. Currently supported: Docker and Kubernetes
+# Container Maker
+Lets you manage containers across various environments. Currently supported: Kubernetes. Upcoming: Docker
+
+How does it work?
+1. Deploy the project inside one of the supported container environments.
+2. Use the GRPC endpoints to create, delete or manage containers.
+
 
 # Setup
 1. Before starting this container maker you need to have grpc certificates in place.
@@ -68,7 +73,7 @@ Currently we support 2 environments:
     ```
     Make sure None of them are pending.
 
-2. Setting up MetalLB for IP address allocation for ingress. This is because our Service is a LoadBalancer and gets an External IP. But we dont have a cloud provider to assign an IP to the LoadBalancer. More explained below.
+2. Setting up MetalLB for IP address allocation for external IP addresses. This is because our Service is a LoadBalancer and gets an External IP. But we dont have a cloud provider to assign an IP to the LoadBalancer. More explained below.
     ```
     # First, install MetalLB
     kubectl apply -f https://raw.githubusercontent.com/metallb/metallb/v0.13.7/config/manifests/metallb-native.yaml

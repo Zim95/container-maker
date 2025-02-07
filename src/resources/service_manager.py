@@ -1,4 +1,5 @@
 # builtins
+from collections import defaultdict
 import time
 
 # modules
@@ -116,6 +117,33 @@ class ServiceManager(KubernetesResourceManager):
         raise TimeoutError(f"Timeout waiting for service {service_name} IP address after {timeout_seconds} seconds")
 
     @classmethod
+    def get_v1_service_ports(cls, data: CreateServiceDataClass) -> list:
+        publish_port_counter: defaultdict = defaultdict(int)
+        target_port_counter: defaultdict = defaultdict(int)
+        ports: list = []
+
+        for pi in data.publish_information:
+            service_port: int = pi.publish_port
+            target_port: int = pi.target_port
+            protocol: str = pi.protocol
+            node_port: int = pi.node_port if data.service_type == ServiceType.NODE_PORT else None
+            publish_port_counter[service_port] += 1
+            target_port_counter[target_port] += 1
+            if publish_port_counter[service_port] > 1:
+                raise Exception(f'Duplicate publish port: {service_port}. Cannot have duplicate ports')
+            if target_port_counter[target_port] > 1:
+                raise Exception(f'Duplicate target port: {target_port}. Cannot have duplicate ports')
+            ports.append(
+                V1ServicePort(
+                    port=service_port,
+                    target_port=target_port,
+                    protocol=protocol,
+                    node_port=node_port
+                )
+            )
+        return ports
+
+    @classmethod
     def create(cls, data: CreateServiceDataClass) -> dict:
         try:
             cls.check_kubernetes_client()
@@ -131,14 +159,7 @@ class ServiceManager(KubernetesResourceManager):
                 ),
                 spec=V1ServiceSpec(
                     selector={"app": data.pod_name},
-                    ports=[
-                        V1ServicePort(
-                            port=data.service_port,
-                            target_port=data.target_port,
-                            protocol=data.protocol,
-                            node_port=data.node_port if data.service_type == ServiceType.NODE_PORT else None
-                        )
-                    ],
+                    ports=cls.get_v1_service_ports(data),
                     type=data.service_type.value if data.service_type else ServiceType.LOAD_BALANCER.value
                 )
             )
