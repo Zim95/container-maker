@@ -50,9 +50,9 @@ class ServiceManager(KubernetesResourceManager):
         ports: list[dict] = []
         for port in service._spec.ports:
             ports.append({
-                'name': port.name, # Optional port name
-                'container_port': port.port, # The service port will be the container port
-                'protocol': port.protocol # TCP/UDP
+                'name': port.name if port.name else None,  # Optional port name
+                'container_port': port.port,  # The service port will be the container port
+                'protocol': port.protocol if port.protocol else None  # TCP/UDP
             })
         return ports
 

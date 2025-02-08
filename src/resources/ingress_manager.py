@@ -156,6 +156,20 @@ class IngressManager(KubernetesResourceManager):
             i: dict = cls.get(GetIngressDataClass(ingress_name=data.ingress_name, namespace_name=data.namespace_name))
             if i:
                 return i
+
+            paths: list[dict] = [
+                {
+                    "path": f"/{data.ingress_name.split('-')[0]}/port-{index+1}",
+                    "pathType": "Prefix",
+                    "backend": {
+                        "service": {
+                            "name": data.service_name,
+                            "port": {"number": service_port["container_port"]},
+                        }
+                    }
+                }
+                for index, service_port in enumerate(data.service_ports)
+            ]
             # Prepare the ingress manifest
             ingress_manifest = {
                 "apiVersion": "networking.k8s.io/v1",
@@ -177,18 +191,7 @@ class IngressManager(KubernetesResourceManager):
                         {
                             "host": data.host,
                             "http": {
-                                "paths": [
-                                    {
-                                        "path": data.path,
-                                        "pathType": "Prefix",
-                                        "backend": {
-                                            "service": {
-                                                "name": data.service_name,
-                                                "port": {"number": data.service_port},
-                                            }
-                                        }
-                                    }
-                                ]
+                                "paths": paths
                             }
                         }
                     ]

@@ -13,7 +13,5 @@ class CreateIngressDataClass(CreateResourceDataClass):
     ingress_name: str  # name of the ingress to create
     namespace_name: str  # namespace to create ingress on
     service_name: str  # name of the service to create ingress on
-    service_port: int  # port of the service to create ingress on
-    service_namespace: str  # namespace of the service to create ingress on
     host: str  # host to create ingress on
-    path: str  # path to create ingress on
+    service_ports: list[dict]  # list of service ports to create ingress on

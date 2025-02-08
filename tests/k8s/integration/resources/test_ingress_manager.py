@@ -10,7 +10,7 @@ from src.resources.dataclasses.namespace.create_namespace_dataclass import Creat
 from src.resources.dataclasses.namespace.delete_namespace_dataclass import DeleteNamespaceDataClass
 from src.resources.dataclasses.pod.create_pod_dataclass import CreatePodDataClass
 from src.resources.dataclasses.pod.delete_pod_dataclass import DeletePodDataClass
-from src.resources.dataclasses.service.create_service_dataclass import CreateServiceDataClass
+from src.resources.dataclasses.service.create_service_dataclass import CreateServiceDataClass, PublishInformationDataClass
 from src.resources.dataclasses.service.delete_service_dataclass import DeleteServiceDataClass
 from src.resources.ingress_manager import IngressManager
 from src.resources.namespace_manager import NamespaceManager
@@ -53,9 +53,13 @@ class TestIngressManager(TestCase):
             service_name=self.service_name,
             pod_name=self.pod_name,
             namespace_name=self.namespace_name,
-            service_port=self.service_port,
-            target_port=list(self.target_ports)[0], # take any one of the target ports
-            protocol=self.protocol
+            publish_information=[
+                PublishInformationDataClass(
+                    publish_port=self.service_port,
+                    target_port=list(self.target_ports)[0],
+                    protocol=self.protocol
+                )
+            ]
         )
         NamespaceManager.create(CreateNamespaceDataClass(**{'namespace_name': self.namespace_name}))
         PodManager.create(self.create_pod_data)
@@ -67,10 +71,10 @@ class TestIngressManager(TestCase):
             namespace_name=self.namespace_name,
             ingress_name=self.ingress_name,
             service_name=self.service_name,
-            service_port=self.service_port,
-            service_namespace=self.namespace_name,
             host=self.host,
-            path=self.path
+            service_ports=[
+                {'container_port': self.service_port, 'protocol': self.protocol}
+            ]
         )
 
     def test_a_ingress_creation_and_removal(self) -> None:
