@@ -36,76 +36,60 @@ class KubernetesContainerHelper:
     '''
     Helper class for Kubernetes Container Manager.
     '''
-    @classmethod
-    def is_namesapce(cls, container_id: str) -> None:
-        '''
-        Check if id of the container is namespace.
-        '''
-        namespaces: list = NamespaceManager.list()
-        return container_id in [ns['namespace_id'] for ns in namespaces]
 
     @classmethod
-    def is_pod(cls, namespace_name: str, container_id: str) -> None:
+    def check_pod(cls, namespace_name: str, container_id: str) -> dict | None:
         '''
         Check if id of the container is pod.
         '''
         pods: list = PodManager.list(ListPodDataClass(**{'namespace_name': namespace_name}))
-        return container_id in [pod['pod_id'] for pod in pods]
+        for pod in pods:
+            if container_id == pod['pod_id']:
+                return pod
+        return None
 
     @classmethod
-    def is_service(cls, namespace_name: str, container_id: str) -> None:
+    def check_service(cls, namespace_name: str, container_id: str) -> dict | None:
         '''
         Check if id of the container is service.
         '''
         services: list = ServiceManager.list(ListServiceDataClass(**{'namespace_name': namespace_name}))
-        return container_id in [service['service_id'] for service in services]
+        for service in services:
+            if container_id == service['service_id']:
+                return service
+        return None
 
     @classmethod
-    def is_ingress(cls, namespace_name: str, container_id: str) -> None:
+    def check_ingress(cls, namespace_name: str, container_id: str) -> dict | None:
         '''
         Check if id of the container is ingress.
         Use list method, since, we get id and namespace in data but not the actual name of the ingress.
         '''
         ingresses: list = IngressManager.list(ListIngressDataClass(**{'namespace_name': namespace_name}))
-        return container_id in [ingress['ingress_id'] for ingress in ingresses]
+        for ingress in ingresses:
+            if container_id == ingress['ingress_id']:
+                return ingress
+        return None
 
     @classmethod
-    def get_ingress(cls, data: GetContainerDataClass) -> None:
-        '''
-        Get ingress. Replace name with data.container_name.
-        '''
-        pass
+    def delete_lingering_services(cls, namespace_name: str) -> None:
+        services: list = ServiceManager.list(ListServiceDataClass(**{'namespace_name': namespace_name}))
+        for svc in services:
+            if not svc.get('associated_pods', []):
+                ServiceManager.delete(DeleteServiceDataClass(
+                    namespace_name=namespace_name,
+                    service_name=svc['service_name'],
+                ))
 
     @classmethod
-    def get_service(cls, data: GetContainerDataClass) -> None:
-        '''
-        Get service. Replace name with data.container_name.
-        Use list method, since, we get id and namespace in data but not the actual name of the service.
-        '''
-        pass
-
-    @classmethod
-    def get_pod(cls, data: GetContainerDataClass) -> None:
-        '''
-        Get pod. Replace name with data.container_name.
-        Use list method, since, we get id and namespace in data but not the actual name of the pod.
-        '''
-        pass
-
-    @classmethod
-    def get_container(cls, data: GetContainerDataClass) -> None:
-        '''
-        Get container.
-        If container_id is ingress, get ingress.
-        If container_id is service, get service.
-        If container_id is pod, get pod.
-        '''
-        if cls.is_ingress(data.container_id):
-            return cls.get_ingress(data)
-        elif cls.is_service(data.container_id):
-            return cls.get_service(data)
-        elif cls.is_pod(data.container_id):
-            return cls.get_pod(data)
+    def delete_lingering_ingresses(cls, namespace_name: str) -> None:
+        ingresses: list = IngressManager.list(ListIngressDataClass(**{'namespace_name': namespace_name}))
+        for ing in ingresses:
+            if not ing.get('associated_services', []):
+                IngressManager.delete(DeleteIngressDataClass(
+                    namespace_name=namespace_name,
+                    ingress_name=ing['ingress_name'],
+                ))
 
 
 class KubernetesContainerManager(ContainerManager):
@@ -174,21 +158,43 @@ class KubernetesContainerManager(ContainerManager):
     @classmethod
     def get(cls, data: GetContainerDataClass) -> None:
         '''
-        Check if id of the container is namespace, pod, service or ingress.
+        Check if id of the container is pod, service or ingress.
         '''
-        pass
+        pod: dict | None = KubernetesContainerHelper.check_pod(namespace_name=data.network_name, container_id=data.container_id)
+        service: dict | None = KubernetesContainerHelper.check_service(namespace_name=data.network_name, container_id=data.container_id)
+        ingress: dict | None = KubernetesContainerHelper.check_ingress(namespace_name=data.network_name, container_id=data.container_id)
+        final_container: dict = pod or service or ingress or {}
+
+        if not final_container:
+            raise Exception(f'Cannot find, container_id={data.container_id} in namespace={data.network_name}')
+
+        # get keys
+        id_key: str = [key for key in final_container.keys() if key.endswith('_id')][0]
+        ip_key: str = [key for key in final_container.keys() if key.endswith('_ip')][0]
+        name_key: str = [key for key in final_container.keys() if key.endswith('_name')][0]
+        network_key: str = [key for key in final_container.keys() if key.endswith('_namespace')][0]
+        ports_key: str = [key for key in final_container.keys() if key.endswith('_ports')][0]
+
+        # final value
+        return {
+            'container_id': final_container[id_key],
+            'container_name': final_container[name_key],
+            'container_ip': final_container[ip_key],
+            'container_network': final_container[network_key],
+            'container_ports': final_container[ports_key],
+        }
 
     @classmethod
-    def validate_publish_information(cls, publish_information: list[dict]) -> None:
+    def validate_publish_information(cls, publish_information: list) -> None:
         unique_target_ports: dict = defaultdict(int)
         unique_publish_ports: dict = defaultdict(int)
         for p in publish_information:
-            unique_target_ports[p['target_port']] += 1
-            unique_publish_ports[p['publish_port']] += 1
-            if unique_target_ports[p['target_port']] > 1:
-                raise ValueError(f'Duplicate target port: {p['target_port']}')
-            if unique_publish_ports[p['publish_port']] > 1:
-                raise ValueError(f'Duplicate publish port: {p['publish_port']}')
+            unique_target_ports[p.target_port] += 1
+            unique_publish_ports[p.publish_port] += 1
+            if unique_target_ports[p.target_port] > 1:
+                raise ValueError(f'Duplicate target port: {p.target_port}')
+            if unique_publish_ports[p.publish_port] > 1:
+                raise ValueError(f'Duplicate publish port: {p.publish_port}')
 
     @classmethod
     def create(cls, data: CreateContainerDataClass) -> dict:
@@ -210,7 +216,7 @@ class KubernetesContainerManager(ContainerManager):
                 image_name=data.image_name,
                 pod_name=f'{data.container_name}-pod',
                 namespace_name=data.network_name,
-                target_ports={pi['target_port'] for pi in data.publish_information},
+                target_ports={pi.target_port for pi in data.publish_information},
                 environment_variables=data.environment_variables,
             ))
             final_container = pod
@@ -226,9 +232,9 @@ class KubernetesContainerManager(ContainerManager):
                     namespace_name=data.network_name,
                     publish_information=[
                         PublishInformationDataClass(
-                            publish_port=pi['publish_port'],
-                            target_port=pi['target_port'],
-                            protocol=pi['protocol'],
+                            publish_port=pi.publish_port,
+                            target_port=pi.target_port,
+                            protocol=pi.protocol,
                         )
                         for pi in data.publish_information
                     ],
@@ -271,17 +277,61 @@ class KubernetesContainerManager(ContainerManager):
         '''
         Delete a container.
         Check the id of the container.
-        If,
-        - pod: Delete pod.
-        - service: Delete service and associated pods.
+        Question: Why are we using ids instead of names? We can directly get resources using names.
+        - We can have duplicate names, but not duplicate ids.
+        - Imagine a pod and a service having the same name and you delete the pod instead of the service.
+        
+        INITIAL APPROACH:
+        -----------------
+        Deletion should be done in a heirarchical manner.
+            - If we delete a pod, the service and ingress associated with it are useless. So we need to delete all of them.
+            - If we delete a service, the ingress associated with it is useless. So we need to delete services. But the pod can still exist.
+            - If we delete an ingress, the service and pod associated with it can still exist. So only delete ingress.
+        In brief,
+        - pod: Delete pod, associated service and associated ingress. Go up the heirarchy.
+        - service: Delete service and associated ingress.
         - ingress: Delete ingress, associated services and associated pods.
+
+        IMPROVEMENT:
+        ------------
+        1. A service can be associated to many pods. Not just a single pod. So its not fair to delete the service,
+            just because we deleted one of the pods it was associated to. Same with ingress.
+        2. So now, we delete pod or ingress or service.
+        3. Then we delete all lingering resources. i.e. services with no pods associated, ingresses with no services associated.
         '''
-        if cls.is_pod(data.container_id):
-            PodManager.delete(DeletePodDataClass(namespace_name=data.container_id))
-        elif cls.is_service(data.container_id):
-            ServiceManager.delete(DeleteServiceDataClass(namespace_name=data.container_id))
-        elif cls.is_ingress(data.container_id):
-            IngressManager.delete(DeleteIngressDataClass(namespace_name=data.container_id))
+        try:
+            pod: dict | None = KubernetesContainerHelper.check_pod(
+                namespace_name=data.network_name, container_id=data.container_id)
+            if pod:
+                PodManager.delete(DeletePodDataClass(
+                    namespace_name=data.network_name,
+                    pod_name=pod['pod_name'],
+                ))
+
+            service: dict | None = KubernetesContainerHelper.check_service(
+                namespace_name=data.network_name, container_id=data.container_id)
+            if service:
+                ServiceManager.delete(DeleteServiceDataClass(
+                    namespace_name=data.network_name,
+                    service_name=service['service_name'],
+                ))
+
+            ingress: dict | None = KubernetesContainerHelper.check_ingress(
+                namespace_name=data.network_name, container_id=data.container_id)
+            if ingress:
+                IngressManager.delete(DeleteIngressDataClass(
+                    namespace_name=data.network_name,
+                    ingress_name=ingress['ingress_name'],
+                ))
+            # delete lingering resources.
+            KubernetesContainerHelper.delete_lingering_services(namespace_name=data.network_name)
+            KubernetesContainerHelper.delete_lingering_ingresses(namespace_name=data.network_name)
+        except ApiException as ae:
+            raise ApiException(f'Error occurred while deleting container: {str(ae)}') from ae
+        except UnsupportedRuntimeEnvironment as ure:
+            raise UnsupportedRuntimeEnvironment(f'Unsupported Runtime Environment: {str(ure)}') from ure
+        except Exception as e:
+            raise Exception(f'Error occurred: {str(e)}') from e 
 
 
 class DockerContainerManager(ContainerManager):
