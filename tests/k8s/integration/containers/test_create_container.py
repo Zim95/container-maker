@@ -167,19 +167,10 @@ class TestCreateContainer(TestCase):
     def tearDown(self) -> None:
         '''
         Remove the container after every test.
+        This deletes lingering namespaces as well. So no need for cleanup.
         '''
         if self.container_id:
             KubernetesContainerManager.delete(DeleteContainerDataClass(
                 container_id=self.container_id,
                 network_name=self.namespace_name,
             ))
-
-
-class ZZZ_Cleanup(TestCase):
-
-    def test_cleanup(self) -> None:
-        '''
-        Cleanup the test environment.
-        '''
-        print('Test: test_cleanup')
-        NamespaceManager.delete(DeleteNamespaceDataClass(namespace_name=NAMESPACE_NAME))
