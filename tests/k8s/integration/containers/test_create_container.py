@@ -36,9 +36,10 @@ class TestCreateContainer(TestCase):
         6. Therefore we need to maintain the order of creation.
         7. The order is: internal -> cluster_local -> cluster_external -> exposed.
         '''
+        print('Test: setUp TestCreateContainer')
         self.container_name: str = 'test-container'
         self.namespace_name: str = NAMESPACE_NAME
-        self.image_name: str = 'test-image'
+        self.image_name: str = 'zim95/ssh_ubuntu:latest'
         self.exposure_level: ExposureLevel = ExposureLevel.INTERNAL
         self.publish_information: list[PublishInformationDataClass] = [
             PublishInformationDataClass(publish_port=2222, target_port=22, protocol='TCP'),
@@ -167,10 +168,11 @@ class TestCreateContainer(TestCase):
         '''
         Remove the container after every test.
         '''
-        KubernetesContainerManager.delete(DeleteContainerDataClass(
-            container_id=self.container_id,
-            network_name=self.namespace_name,
-        ))
+        if self.container_id:
+            KubernetesContainerManager.delete(DeleteContainerDataClass(
+                container_id=self.container_id,
+                network_name=self.namespace_name,
+            ))
 
 
 class ZZZ_Cleanup(TestCase):

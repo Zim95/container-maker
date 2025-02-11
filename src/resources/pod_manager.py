@@ -124,6 +124,37 @@ class PodManager(KubernetesResourceManager):
         raise TimeoutError(f"Timeout waiting for pod {pod_name} IP address after {timeout_seconds} seconds")
 
     @classmethod
+    def poll_status(cls, namespace_name: str, pod_name: str, target_status: str, timeout_seconds: float = 20.0) -> None:
+        '''
+        Poll pod status until it matches target_status or timeout is reached.
+        
+        Args:
+            namespace_name: Name of the namespace
+            pod_name: Name of the pod
+            target_status: Status to wait for (e.g., 'Running', 'Succeeded')
+            timeout_seconds: Maximum time to wait in seconds
+        
+        Raises:
+            TimeoutError: If pod doesn't reach target status within timeout
+            ApiException: If there's an error getting pod status
+        '''
+        start_time = time.time()
+        while (time.time() - start_time) < timeout_seconds:
+            try:
+                pod = cls.client.read_namespaced_pod(name=pod_name, namespace=namespace_name)
+                current_status = pod.status.phase
+                print(f'Pod: {pod_name} Status:', current_status)
+                if current_status == target_status:
+                    return
+                elif current_status in ['Failed', 'Unknown']:
+                    raise Exception(f'Pod entered {current_status} state')
+            except ApiException as e:
+                if e.status != 404:  # Ignore 404 errors while pod is being created
+                    raise
+            time.sleep(1)
+        raise TimeoutError(f"Timeout waiting for pod {pod_name} to reach status {target_status} after {timeout_seconds} seconds")
+
+    @classmethod
     def create(cls, data: CreatePodDataClass) -> dict:
         try:
             cls.check_kubernetes_client()
@@ -181,6 +212,8 @@ class PodManager(KubernetesResourceManager):
             )
             # create the actual pod
             pod: V1Pod = cls.client.create_namespaced_pod(data.namespace_name, pod_manifest)
+            # wait for the pod status to be running
+            cls.poll_status(namespace_name=data.namespace_name, pod_name=data.pod_name, target_status='Running')
             return {
                 "pod_id": pod.metadata.uid,
                 "pod_name": pod.metadata.name,
@@ -190,6 +223,8 @@ class PodManager(KubernetesResourceManager):
                 "pod_labels": pod.metadata.labels or {},
                 "associated_volumes": cls.get_pod_volumes(pod),
             }
+        except TimeoutError as te:
+            raise TimeoutError(te) from te
         except ApiException as ae:
             raise ApiException(f'Error occured while creating pod: {str(ae)}') from ae
         except UnsupportedRuntimeEnvironment as ure:
