@@ -40,7 +40,6 @@ from src.resources.dataclasses.namespace.create_namespace_dataclass import Creat
 from src.resources.pod_manager import PodManager
 from src.resources.dataclasses.pod.list_pod_dataclass import ListPodDataClass
 from src.resources.dataclasses.pod.create_pod_dataclass import CreatePodDataClass
-from src.resources.volume_manager import VolumeManager
 
 NAMESPACE_NAME: str = 'test-pod-manager'
 
@@ -170,6 +169,17 @@ class TestPodManager(TestCase):
                 'namespace_name': self.namespace_name,
                 'pod_name': self.pod_name
             }))
+
+    def test_pod_status_timeout(self) -> None:
+        '''
+        Test if the pod status timeout is working.
+        '''
+        print('Test: test_pod_status_timeout')
+        try:
+            self.create_pod_data.image_name = 'test-image'
+            PodManager.create(self.create_pod_data)
+        except TimeoutError as e:
+            self.assertEqual(str(e), f"Timeout waiting for pod {self.pod_name} to reach status Running after {20.0} seconds")
 
     # TODO: Implement this test and volumes later on.
     # def test_pod_with_volumes(self) -> None:
