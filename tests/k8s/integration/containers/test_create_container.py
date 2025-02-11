@@ -6,8 +6,6 @@ from src.containers.containers import KubernetesContainerManager
 from src.containers.dataclasses.create_container_dataclass import CreateContainerDataClass, ExposureLevel
 from src.containers.dataclasses.delete_container_dataclass import DeleteContainerDataClass
 from src.resources.dataclasses.ingress.list_ingress_dataclass import ListIngressDataClass
-from src.resources.dataclasses.namespace.create_namespace_dataclass import CreateNamespaceDataClass
-from src.resources.dataclasses.namespace.delete_namespace_dataclass import DeleteNamespaceDataClass
 from src.resources.dataclasses.pod.list_pod_dataclass import ListPodDataClass
 from src.resources.dataclasses.service.create_service_dataclass import PublishInformationDataClass
 from src.resources.dataclasses.service.list_service_dataclass import ListServiceDataClass
@@ -17,7 +15,7 @@ from src.resources.pod_manager import PodManager
 from src.resources.service_manager import ServiceManager
 
 
-NAMESPACE_NAME: str = 'test-container-manager'
+NAMESPACE_NAME: str = 'test-create-container'
 
 
 class TestCreateContainer(TestCase):

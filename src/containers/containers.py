@@ -1,3 +1,10 @@
+'''
+Container Manager is the API for the container manager microservice.
+If you want more control over the resources, use the resource manager.
+Container Manager is restricted to do things a certain way.
+There is no customizability.
+'''
+
 # builtins
 from collections import defaultdict
 
@@ -14,14 +21,18 @@ from src.containers.dataclasses.delete_container_dataclass import DeleteContaine
 # resources
 from src.resources.dataclasses.ingress.create_ingress_dataclass import CreateIngressDataClass
 from src.resources.dataclasses.ingress.delete_ingress_dataclass import DeleteIngressDataClass
+from src.resources.dataclasses.ingress.get_ingress_dataclass import GetIngressDataClass
 from src.resources.dataclasses.ingress.list_ingress_dataclass import ListIngressDataClass
 from src.resources.dataclasses.namespace.create_namespace_dataclass import CreateNamespaceDataClass
+from src.resources.dataclasses.namespace.delete_namespace_dataclass import DeleteNamespaceDataClass
 from src.resources.dataclasses.pod.create_pod_dataclass import CreatePodDataClass
 from src.resources.dataclasses.pod.delete_pod_dataclass import DeletePodDataClass
 from src.resources.dataclasses.pod.list_pod_dataclass import ListPodDataClass
 from src.resources.dataclasses.service.create_service_dataclass import CreateServiceDataClass, PublishInformationDataClass, ServiceType
 from src.resources.dataclasses.service.delete_service_dataclass import DeleteServiceDataClass
+from src.resources.dataclasses.service.get_service_dataclass import GetServiceDataClass
 from src.resources.dataclasses.service.list_service_dataclass import ListServiceDataClass
+from src.resources.dataclasses.volume.list_volume_dataclass import ListVolumeDataClass
 from src.resources.namespace_manager import NamespaceManager
 from src.resources.pod_manager import PodManager
 from src.resources.service_manager import ServiceManager
@@ -30,6 +41,8 @@ from src.containers import ContainerManager
 
 # kubernetes
 from kubernetes.client.exceptions import ApiException
+
+from src.resources.volume_manager import VolumeManager
 
 
 class KubernetesContainerHelper:
@@ -72,23 +85,67 @@ class KubernetesContainerHelper:
         return None
 
     @classmethod
-    def delete_lingering_services(cls, namespace_name: str) -> None:
-        services: list = ServiceManager.list(ListServiceDataClass(**{'namespace_name': namespace_name}))
-        for svc in services:
-            if not svc.get('associated_pods', []):
-                ServiceManager.delete(DeleteServiceDataClass(
-                    namespace_name=namespace_name,
-                    service_name=svc['service_name'],
-                ))
+    def delete_pod(cls, namespace_name: str, pod_name: str) -> None:
+        PodManager.delete(DeletePodDataClass(
+            namespace_name=namespace_name,
+            pod_name=pod_name,
+        ))
 
     @classmethod
-    def delete_lingering_ingresses(cls, namespace_name: str) -> None:
-        ingresses: list = IngressManager.list(ListIngressDataClass(**{'namespace_name': namespace_name}))
-        for ing in ingresses:
-            if not ing.get('associated_services', []):
-                IngressManager.delete(DeleteIngressDataClass(
-                    namespace_name=namespace_name,
-                    ingress_name=ing['ingress_name'],
+    def delete_service(cls, namespace_name: str, service_name: str) -> None:
+        service: dict = ServiceManager.get(GetServiceDataClass(
+            namespace_name=namespace_name,
+            service_name=service_name,
+        ))
+        associated_pods: list = service.get('associated_pods', [])
+        for pod in associated_pods:
+            cls.delete_pod(namespace_name=namespace_name, pod_name=pod['pod_name'])
+        ServiceManager.delete(DeleteServiceDataClass(
+            namespace_name=namespace_name,
+            service_name=service_name,
+        ))
+
+    @classmethod
+    def delete_ingress(cls, namespace_name: str, ingress_name: str) -> None:
+        ingress: dict = IngressManager.get(GetIngressDataClass(
+            namespace_name=namespace_name,
+            ingress_name=ingress_name,
+        ))
+        associated_services: list = ingress.get('associated_services', [])
+        for service in associated_services:
+            cls.delete_service(namespace_name=namespace_name, service_name=service['service_name'])
+        IngressManager.delete(DeleteIngressDataClass(
+            namespace_name=namespace_name,
+            ingress_name=ingress_name,
+        ))
+
+    @classmethod
+    def delete_lingering_namespaces(cls) -> None:
+        '''
+        Delete namespaces that have no resources associated with them.
+        Skip protected namespaces.
+        '''
+        # System namespaces that should not be deleted.
+        PROTECTED_NAMESPACES: list[str] = [
+            'default', 
+            'kube-system', 
+            'kube-public', 
+            'kube-node-lease',
+            'ingress-nginx',
+            'metallb-system',
+        ]
+        # for the rest, we just check if there are no pods, services or ingresses.
+        namespaces: list = NamespaceManager.list()
+        for ns in namespaces:
+            namespace_name: str = ns['namespace_name']
+            if namespace_name in PROTECTED_NAMESPACES:
+                continue
+            pods: list = PodManager.list(ListPodDataClass(**{'namespace_name': namespace_name}))
+            services: list = ServiceManager.list(ListServiceDataClass(**{'namespace_name': namespace_name}))
+            ingresses: list = IngressManager.list(ListIngressDataClass(**{'namespace_name': namespace_name}))
+            if not (pods or services or ingresses):
+                NamespaceManager.delete(
+                    DeleteNamespaceDataClass(namespace_name=namespace_name
                 ))
 
 
@@ -130,7 +187,7 @@ class KubernetesContainerManager(ContainerManager):
                     'container_name': ingress['ingress_name'],
                     'container_ip': ingress['ingress_ip'],
                     'container_network': ingress['ingress_namespace'],
-                    'container_port': ingress['ingress_ports'],
+                    'container_ports': ingress['ingress_ports'],
                 }
             )
         for service in unique_services:
@@ -140,7 +197,7 @@ class KubernetesContainerManager(ContainerManager):
                     'container_name': service['service_name'],
                     'container_ip': service['service_ip'],
                     'container_network': service['service_namespace'],
-                    'container_port': service['service_port']
+                    'container_ports': service['service_ports']
                 }
             )
         for pod in unique_pods:
@@ -150,7 +207,7 @@ class KubernetesContainerManager(ContainerManager):
                     'container_name': pod['pod_name'],
                     'container_ip': pod['pod_ip'],
                     'container_network': pod['pod_namespace'],
-                    'container_port': pod['pod_port']
+                    'container_ports': pod['pod_ports']
                 }
             )
         return containers
@@ -265,6 +322,8 @@ class KubernetesContainerManager(ContainerManager):
                 'container_network': final_container[network_key],
                 'container_ports': final_container[ports_key],
             }
+        except TimeoutError as te:
+            raise TimeoutError(te) from te
         except ApiException as ae:
             raise ApiException(f'Error occurred while creating container: {str(ae)}') from ae
         except UnsupportedRuntimeEnvironment as ure:
@@ -298,34 +357,34 @@ class KubernetesContainerManager(ContainerManager):
             just because we deleted one of the pods it was associated to. Same with ingress.
         2. So now, we delete pod or ingress or service.
         3. Then we delete all lingering resources. i.e. services with no pods associated, ingresses with no services associated.
+
+        ACTUAL APPROACH:
+        ---------------
+        1. For container manager, the collection of resources is a whole.
+        2. A container that is exposed is a collection of ingress, service and pod.
+        3. This means when the ingress container is deleted, all associated resources should also be deleted.
+            Because the container is a whole, i.e. ingress + service + pod.
+        4. We should however, delete the lingering resources if there are any, but as it is, thats how things should be.
         '''
         try:
             pod: dict | None = KubernetesContainerHelper.check_pod(
                 namespace_name=data.network_name, container_id=data.container_id)
             if pod:
-                PodManager.delete(DeletePodDataClass(
-                    namespace_name=data.network_name,
-                    pod_name=pod['pod_name'],
-                ))
+                KubernetesContainerHelper.delete_pod(namespace_name=data.network_name, pod_name=pod['pod_name'])
 
             service: dict | None = KubernetesContainerHelper.check_service(
                 namespace_name=data.network_name, container_id=data.container_id)
             if service:
-                ServiceManager.delete(DeleteServiceDataClass(
-                    namespace_name=data.network_name,
-                    service_name=service['service_name'],
-                ))
+                KubernetesContainerHelper.delete_service(
+                    namespace_name=data.network_name, service_name=service['service_name'])
 
             ingress: dict | None = KubernetesContainerHelper.check_ingress(
                 namespace_name=data.network_name, container_id=data.container_id)
             if ingress:
-                IngressManager.delete(DeleteIngressDataClass(
-                    namespace_name=data.network_name,
-                    ingress_name=ingress['ingress_name'],
-                ))
+                KubernetesContainerHelper.delete_ingress(
+                    namespace_name=data.network_name, ingress_name=ingress['ingress_name'])
             # delete lingering resources.
-            KubernetesContainerHelper.delete_lingering_services(namespace_name=data.network_name)
-            KubernetesContainerHelper.delete_lingering_ingresses(namespace_name=data.network_name)
+            KubernetesContainerHelper.delete_lingering_namespaces()
         except ApiException as ae:
             raise ApiException(f'Error occurred while deleting container: {str(ae)}') from ae
         except UnsupportedRuntimeEnvironment as ure:

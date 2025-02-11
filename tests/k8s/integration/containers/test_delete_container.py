@@ -5,13 +5,9 @@ from unittest import TestCase
 from src.containers.containers import KubernetesContainerManager
 from src.containers.dataclasses.create_container_dataclass import CreateContainerDataClass, ExposureLevel
 from src.containers.dataclasses.delete_container_dataclass import DeleteContainerDataClass
-from src.resources.dataclasses.ingress.delete_ingress_dataclass import DeleteIngressDataClass
 from src.resources.dataclasses.ingress.list_ingress_dataclass import ListIngressDataClass
-from src.resources.dataclasses.namespace.get_namespace_dataclass import GetNamespaceDataClass
-from src.resources.dataclasses.pod.delete_pod_dataclass import DeletePodDataClass
 from src.resources.dataclasses.pod.list_pod_dataclass import ListPodDataClass
 from src.resources.dataclasses.service.create_service_dataclass import PublishInformationDataClass
-from src.resources.dataclasses.service.delete_service_dataclass import DeleteServiceDataClass
 from src.resources.dataclasses.service.list_service_dataclass import ListServiceDataClass
 from src.resources.ingress_manager import IngressManager
 from src.resources.namespace_manager import NamespaceManager
@@ -84,7 +80,6 @@ class TestDeleteContainer(TestCase):
             the namespace after Delete pod test deletes everything.
         '''
         print('Test: setUp TestDeleteContainer')
-        self.container_name: str = 'test-container'
         self.namespace_name: str = NAMESPACE_NAME
         self.image_name: str = 'zim95/ssh_ubuntu:latest'
         self.publish_information: list[PublishInformationDataClass] = [
