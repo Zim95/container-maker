@@ -135,7 +135,7 @@ class IngressManager(KubernetesResourceManager):
         while (time.time() - start_time) < timeout_seconds:
             try:
                 ingress = cls.client.read_namespaced_ingress(name=ingress_name, namespace=namespace_name)
-                print(ingress.status.load_balancer.ingress)
+                print('Ingress IP status:', ingress.status.load_balancer.ingress)
                 if ingress.status.load_balancer.ingress:
                     # Try IP first, then hostname if IP is not available
                     return (ingress.status.load_balancer.ingress[0].ip or 
