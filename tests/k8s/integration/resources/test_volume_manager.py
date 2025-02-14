@@ -1,6 +1,7 @@
 # built-ins
 from unittest import TestCase
 # modules
+from src.common import config
 from src.resources.dataclasses.namespace.create_namespace_dataclass import CreateNamespaceDataClass
 from src.resources.dataclasses.namespace.delete_namespace_dataclass import DeleteNamespaceDataClass
 from src.resources.dataclasses.volume.create_volume_dataclass import CreateVolumeDataClass, VolumeAccessMode, VolumeReclaimPolicy
@@ -21,7 +22,8 @@ class TestVolumeManager(TestCase):
             **{
                 'namespace_name': self.namespace_name,
                 'volume_name': 'test-volume',
-                'host_path': '/tmp/test-volume',
+                'nfs_server': config.NFS_IP,
+                'nfs_path': config.NFS_PATH,
             }
         )
 
@@ -37,7 +39,8 @@ class TestVolumeManager(TestCase):
         self.assertEqual(volume['volume']['volume_name'], self.create_volume_data.volume_name)
         self.assertEqual(volume['claim']['claim_name'], f'{self.create_volume_data.volume_name}-claim')
         self.assertEqual(volume['claim']['claim_namespace'], self.namespace_name)
-        self.assertEqual(volume['volume']['volume_host_path'], self.create_volume_data.host_path)
+        self.assertEqual(volume['volume']['volume_nfs_server'], self.create_volume_data.nfs_server)
+        self.assertEqual(volume['volume']['volume_nfs_path'], self.create_volume_data.nfs_path)
 
         # check for volume default values
         self.assertEqual(volume['volume']['volume_access_modes'], [VolumeAccessMode.READ_WRITE_ONCE.value])
@@ -56,7 +59,8 @@ class TestVolumeManager(TestCase):
         self.assertEqual(first_volume['volume']['volume_name'], self.create_volume_data.volume_name)
         self.assertEqual(first_volume['claim']['claim_name'], f'{self.create_volume_data.volume_name}-claim')
         self.assertEqual(first_volume['claim']['claim_namespace'], self.namespace_name)
-        self.assertEqual(first_volume['volume']['volume_host_path'], self.create_volume_data.host_path)
+        self.assertEqual(first_volume['volume']['volume_nfs_server'], self.create_volume_data.nfs_server)
+        self.assertEqual(first_volume['volume']['volume_nfs_path'], self.create_volume_data.nfs_path)
         # check for volume default values
         self.assertEqual(first_volume['volume']['volume_access_modes'], [VolumeAccessMode.READ_WRITE_ONCE.value])
         self.assertEqual(first_volume['volume']['volume_reclaim_policy'], VolumeReclaimPolicy.DELETE.value)
@@ -69,7 +73,8 @@ class TestVolumeManager(TestCase):
         self.assertEqual(second_volume['volume']['volume_name'], self.create_volume_data.volume_name)
         self.assertEqual(second_volume['claim']['claim_name'], f'{self.create_volume_data.volume_name}-claim')
         self.assertEqual(second_volume['claim']['claim_namespace'], self.namespace_name)
-        self.assertEqual(second_volume['volume']['volume_host_path'], self.create_volume_data.host_path)
+        self.assertEqual(second_volume['volume']['volume_nfs_server'], self.create_volume_data.nfs_server)
+        self.assertEqual(second_volume['volume']['volume_nfs_path'], self.create_volume_data.nfs_path)
 
         # check for volume default values
         self.assertEqual(second_volume['volume']['volume_access_modes'], [VolumeAccessMode.READ_WRITE_ONCE.value])
@@ -95,7 +100,8 @@ class TestVolumeManager(TestCase):
         self.assertEqual(volume['volume']['volume_name'], self.create_volume_data.volume_name)
         self.assertEqual(volume['claim']['claim_name'], f'{self.create_volume_data.volume_name}-claim')
         self.assertEqual(volume['claim']['claim_namespace'], self.namespace_name)
-        self.assertEqual(volume['volume']['volume_host_path'], self.create_volume_data.host_path)
+        self.assertEqual(volume['volume']['volume_nfs_server'], self.create_volume_data.nfs_server)
+        self.assertEqual(volume['volume']['volume_nfs_path'], self.create_volume_data.nfs_path)
         # check for volume default values
         self.assertEqual(volume['volume']['volume_access_modes'], [VolumeAccessMode.READ_WRITE_ONCE.value])
         self.assertEqual(volume['volume']['volume_reclaim_policy'], VolumeReclaimPolicy.DELETE.value)
@@ -113,7 +119,8 @@ class TestVolumeManager(TestCase):
         self.assertEqual(volume['volume']['volume_name'], self.create_volume_data.volume_name)
         self.assertEqual(volume['claim']['claim_name'], f'{self.create_volume_data.volume_name}-claim')
         self.assertEqual(volume['claim']['claim_namespace'], self.namespace_name)
-        self.assertEqual(volume['volume']['volume_host_path'], self.create_volume_data.host_path)
+        self.assertEqual(volume['volume']['volume_nfs_server'], self.create_volume_data.nfs_server)
+        self.assertEqual(volume['volume']['volume_nfs_path'], self.create_volume_data.nfs_path)
         # check for volume default values
         self.assertEqual(volume['volume']['volume_access_modes'], [VolumeAccessMode.READ_ONLY_MANY.value])  # this is what we are testing
         self.assertEqual(volume['volume']['volume_reclaim_policy'], VolumeReclaimPolicy.DELETE.value)
@@ -131,7 +138,8 @@ class TestVolumeManager(TestCase):
         self.assertEqual(volume['volume']['volume_name'], self.create_volume_data.volume_name)
         self.assertEqual(volume['claim']['claim_name'], f'{self.create_volume_data.volume_name}-claim')
         self.assertEqual(volume['claim']['claim_namespace'], self.namespace_name)
-        self.assertEqual(volume['volume']['volume_host_path'], self.create_volume_data.host_path)
+        self.assertEqual(volume['volume']['volume_nfs_server'], self.create_volume_data.nfs_server)
+        self.assertEqual(volume['volume']['volume_nfs_path'], self.create_volume_data.nfs_path)
         # check for volume default values
         self.assertEqual(volume['volume']['volume_access_modes'], [VolumeAccessMode.READ_WRITE_ONCE.value])
         self.assertEqual(volume['volume']['volume_reclaim_policy'], VolumeReclaimPolicy.RETAIN.value)  # this is what we are testing

@@ -76,6 +76,10 @@ spec:
             secretKeyRef:
               name: grpc-certs
               key: ca.crt
+        - name: NFS_IP
+          value: container-maker-nfs-server.default.svc.cluster.local
+        - name: NFS_PATH
+          value: /exports
         volumeMounts:
         - name: app-code
           mountPath: /app

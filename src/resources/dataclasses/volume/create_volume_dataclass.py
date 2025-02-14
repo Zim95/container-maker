@@ -24,7 +24,8 @@ class CreateVolumeDataClass(CreateResourceDataClass):
     '''
     volume_name: str  # name of the volume
     namespace_name: str  # namespace to create the volume in
-    host_path: str  # host path of the volume
+    nfs_server: str  # nfs server of the volume
+    nfs_path: str  # nfs path of the volume
     storage_size: str = '1Gi'  # size of the storage
     access_modes: List[VolumeAccessMode] = field(
         default_factory=lambda: [VolumeAccessMode.READ_WRITE_ONCE]

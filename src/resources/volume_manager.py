@@ -36,7 +36,8 @@ class VolumeManager(KubernetesResourceManager):
                         'volume_size': volume.spec.capacity['storage'],
                         'volume_access_modes': volume.spec.access_modes,
                         'volume_reclaim_policy': volume.spec.persistent_volume_reclaim_policy,
-                        'volume_host_path': volume.spec.host_path.path,
+                        'volume_nfs_server': volume.spec.nfs.server,
+                        'volume_nfs_path': volume.spec.nfs.path,
                     } if volume.metadata.name else {},
                 }
                 claim: V1PersistentVolumeClaim = cls.client.read_namespaced_persistent_volume_claim(
@@ -84,7 +85,8 @@ class VolumeManager(KubernetesResourceManager):
                     'volume_size': pv_response.spec.capacity['storage'],
                     'volume_access_modes': pv_response.spec.access_modes,
                     'volume_reclaim_policy': pv_response.spec.persistent_volume_reclaim_policy,
-                    'volume_host_path': pv_response.spec.host_path.path,
+                    'volume_nfs_server': pv_response.spec.nfs.server,
+                    'volume_nfs_path': pv_response.spec.nfs.path,
                 } if pv_response else {},
                 'claim': {
                     'claim_id': pvc_response.metadata.uid,
@@ -116,7 +118,7 @@ class VolumeManager(KubernetesResourceManager):
 
             # if volume does not exist then create it
             volume_data: dict = v.get('volume', {})
-            if not v.get('volume', {}):
+            if not volume_data:
                 volume: V1PersistentVolume = V1PersistentVolume(
                     api_version="v1",
                     kind="PersistentVolume",
@@ -127,11 +129,12 @@ class VolumeManager(KubernetesResourceManager):
                         "capacity": {
                             "storage": data.storage_size
                         },
-                        "accessModes": [mode.value for mode in data.access_modes],
+                        "accessModes": [mode if isinstance(mode, str) else mode.value for mode in data.access_modes],
                         "persistentVolumeReclaimPolicy": data.reclaim_policy.value,
-                        "storageClassName": "hostpath",
-                        "hostPath": {
-                            "path": data.host_path
+                        "storageClassName": "nfs",
+                        "nfs": {
+                            "server": data.nfs_server,
+                            "path": data.nfs_path
                         }
                     }
                 )
@@ -142,42 +145,45 @@ class VolumeManager(KubernetesResourceManager):
                     'volume_size': pv_response.spec.capacity['storage'],
                     'volume_access_modes': pv_response.spec.access_modes,
                     'volume_reclaim_policy': pv_response.spec.persistent_volume_reclaim_policy,
-                    'volume_host_path': pv_response.spec.host_path.path,
+                    'volume_nfs_server': pv_response.spec.nfs.server,
+                    'volume_nfs_path': pv_response.spec.nfs.path,
                 }
 
             # if claim does not exist then create it
             claim_data: dict = v.get('claim', {})
-            if not v.get('claim', {}):
-                # Create corresponding PVC
-                volume_claim: V1PersistentVolumeClaim = V1PersistentVolumeClaim(
-                    api_version="v1",
-                    kind="PersistentVolumeClaim",
-                    metadata={
-                        "name": f'{data.volume_name}-claim',
-                        "namespace": data.namespace_name
-                    },
-                    spec={
-                        "accessModes": [mode.value for mode in data.access_modes],
-                        "resources": {
-                            "requests": {
-                                "storage": data.storage_size
-                            }
+            if not claim_data:
+                if volume_data and getattr(volume_data, "spec", {}).get("claim_ref"):
+                    raise Exception(f"Volume {data.volume_name} is already bound to a claim. Skipping PVC creation.")
+                else:
+                    # Create corresponding PVC
+                    volume_claim: V1PersistentVolumeClaim = V1PersistentVolumeClaim(
+                        api_version="v1",
+                        kind="PersistentVolumeClaim",
+                        metadata={
+                            "name": f'{data.volume_name}-claim',
+                            "namespace": data.namespace_name
                         },
-                        "storageClassName": "hostpath",
-                        "volumeName": data.volume_name
+                        spec={
+                            "accessModes": [mode if isinstance(mode, str) else mode.value for mode in data.access_modes],
+                            "resources": {
+                                "requests": {
+                                    "storage": data.storage_size
+                                }
+                            },
+                            "storageClassName": "nfs",
+                            "volumeName": data.volume_name
+                        }
+                    )
+
+                    pvc_response: V1PersistentVolumeClaim = cls.client.create_namespaced_persistent_volume_claim(
+                        namespace=data.namespace_name,
+                        body=volume_claim
+                    )
+                    claim_data = {
+                        'claim_id': pvc_response.metadata.uid,
+                        'claim_name': pvc_response.metadata.name,
+                        'claim_namespace': pvc_response.metadata.namespace,
                     }
-                )
-
-                pvc_response: V1PersistentVolumeClaim = cls.client.create_namespaced_persistent_volume_claim(
-                    namespace=data.namespace_name,
-                    body=volume_claim
-                )
-                claim_data = {
-                    'claim_id': pvc_response.metadata.uid,
-                    'claim_name': pvc_response.metadata.name,
-                    'claim_namespace': pvc_response.metadata.namespace,
-                }
-
             return {
                 'volume': volume_data,
                 'claim': claim_data,
@@ -208,31 +214,35 @@ class VolumeManager(KubernetesResourceManager):
         '''
         try:
             cls.check_kubernetes_client()
-            # Delete PVC first
-            try:
-                print(f"Deleting PVC: {data.volume_name}-claim")
-                cls.client.delete_namespaced_persistent_volume_claim(
-                    name=f'{data.volume_name}-claim',
-                    namespace=data.namespace_name
-                )
-                print("PVC deletion initiated")
-            except ApiException as e:
-                if e.status == 404:
-                    print("PVC already deleted")
-                else:
-                    raise e
-            # Delete PV
-            try:
-                print(f"Deleting PV: {data.volume_name}")
-                cls.client.delete_persistent_volume(
-                    name=data.volume_name
-                )
-                print("PV deletion initiated")
-            except ApiException as e:
-                if e.status == 404:
-                    print("PV already deleted")
-                else:
-                    raise e
+            v: dict = cls.get(GetVolumeDataClass(namespace_name=data.namespace_name, volume_name=data.volume_name))
+
+            # Delete PVC first if it exists
+            if v.get("claim", {}):
+                try:
+                    print(f"Deleting PVC: {data.volume_name}-claim")
+                    cls.client.delete_namespaced_persistent_volume_claim(
+                        name=f'{data.volume_name}-claim',
+                        namespace=data.namespace_name
+                    )
+                    print("PVC deletion initiated")
+                except ApiException as e:
+                    if e.status == 404:
+                        print("PVC already deleted")
+                    else:
+                        raise e
+
+            # Delete PV if it exists
+            if v.get("volume", {}):
+                try:
+                    print(f"Deleting PV: {data.volume_name}")
+                    cls.client.delete_persistent_volume(name=data.volume_name)
+                    print("PV deletion initiated")
+                except ApiException as e:
+                    if e.status == 404:
+                        print("PV already deleted")
+                    else:
+                        raise e
+
             print("Waiting for deletion to complete...")
             cls.poll_termination(data.namespace_name, data.volume_name)
             return {'status': 'success'}
