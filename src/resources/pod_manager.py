@@ -184,7 +184,21 @@ class PodManager(KubernetesResourceManager):
                         "nginx.ingress.kubernetes.io/proxy-send-timeout": "3600"  # for websockets
                     }
                 ),
-                spec=V1PodSpec(                    
+                spec=V1PodSpec(
+                    init_containers=[
+                        # This init container will ensure the directories exist in the PVC.
+                        V1Container(
+                            name="init-create-dirs",
+                            image="alpine:latest",
+                            command=["sh", "-c", "mkdir -p /mnt/home /mnt/local /mnt/opt"],
+                            volume_mounts=[
+                                V1VolumeMount(
+                                    name=data.volume_config['volume']['volume_name'],
+                                    mount_path="/mnt"  # Mount the entire PVC here (without subPath)
+                                )
+                            ]
+                        )
+                    ] if data.volume_config else None,
                     # Main container
                     containers=[
                         V1Container(
@@ -195,7 +209,18 @@ class PodManager(KubernetesResourceManager):
                             volume_mounts=[
                                 V1VolumeMount(
                                     name=data.volume_config['volume']['volume_name'],
-                                    mount_path=f"{data.pod_name}-data"
+                                    mount_path="/home",  # for all user data
+                                    sub_path='home'
+                                ),
+                                V1VolumeMount(
+                                    name=data.volume_config['volume']['volume_name'],
+                                    mount_path="/usr/local",  # for installed applications
+                                    sub_path='local'
+                                ),
+                                V1VolumeMount(
+                                    name=data.volume_config['volume']['volume_name'],
+                                    mount_path="/opt",  # for all installed applications
+                                    sub_path='opt'
                                 )
                             ] if data.volume_config else None,
                         )

@@ -32,14 +32,16 @@ import time
 import paramiko
 
 # modules
+from src.common import config
 from src.resources.dataclasses.namespace.delete_namespace_dataclass import DeleteNamespaceDataClass
 from src.resources.dataclasses.pod.delete_pod_dataclass import DeletePodDataClass
-from src.resources.dataclasses.volume.create_volume_dataclass import CreateVolumeDataClass
+from src.resources.dataclasses.volume.create_volume_dataclass import CreateVolumeDataClass, VolumeReclaimPolicy
 from src.resources.namespace_manager import NamespaceManager
 from src.resources.dataclasses.namespace.create_namespace_dataclass import CreateNamespaceDataClass
 from src.resources.pod_manager import PodManager
 from src.resources.dataclasses.pod.list_pod_dataclass import ListPodDataClass
 from src.resources.dataclasses.pod.create_pod_dataclass import CreatePodDataClass
+from src.resources.volume_manager import VolumeManager
 
 NAMESPACE_NAME: str = 'test-pod-manager'
 
@@ -180,8 +182,14 @@ class TestPodManager(TestCase):
             PodManager.create(self.create_pod_data)
         except TimeoutError as e:
             self.assertEqual(str(e), f"Timeout waiting for pod {self.pod_name} to reach status Running after {20.0} seconds")
+            self.create_pod_data.image_name = 'zim95/ssh_ubuntu:latest'  # set it back to the normal image for the rest of the tests.
+        # delete the existing pod. Otherwise the new pod will not be created. it will simply fetch the existing pod.
+        # the existing pod will have the same image error and the rest of the tests will not work.
+        PodManager.delete(DeletePodDataClass(**{
+            'namespace_name': self.namespace_name,
+            'pod_name': self.pod_name
+        }))
 
-    # TODO: Implement this test and volumes later on.
     # def test_pod_with_volumes(self) -> None:
     #     '''
     #     Create a volume and then see if has been attached to the pod.
@@ -190,13 +198,22 @@ class TestPodManager(TestCase):
     #     volume: dict = VolumeManager.create(CreateVolumeDataClass(
     #         **{
     #             'namespace_name': self.namespace_name,
-    #             'volume_name': f'{self.pod_name}-volume',
-    #             'host_path': f'/tmp/{self.pod_name}-data',
+    #             'volume_name': 'test-volume',
+    #             'nfs_server': config.NFS_IP,
+    #             'nfs_path': config.NFS_PATH,
+    #             'reclaim_policy': VolumeReclaimPolicy.RETAIN,
     #         }
     #     ))
-    #     breakpoint()
     #     self.create_pod_data.volume_config = volume
     #     pod: dict = PodManager.create(self.create_pod_data)
+    #     # create a file in the pod. use exec command to create a file in the pod.
+
+
+    #     # install vim in the pod
+    #     # delete the pod
+    #     # recreate the pod with the same volume config
+    #     # check if the file still exists
+    #     # check if vim is installed
 
     def test_websocket_into_pod(self) -> None:
         '''
