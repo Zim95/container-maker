@@ -213,7 +213,7 @@ class KubernetesContainerManager(ContainerManager):
         return containers
 
     @classmethod
-    def get(cls, data: GetContainerDataClass) -> None:
+    def get(cls, data: GetContainerDataClass) -> dict:
         '''
         Check if id of the container is pod, service or ingress.
         '''
@@ -332,7 +332,7 @@ class KubernetesContainerManager(ContainerManager):
             raise Exception(f'Error occurred: {str(e)}') from e
 
     @classmethod
-    def delete(cls, data: DeleteContainerDataClass) -> None:
+    def delete(cls, data: DeleteContainerDataClass) -> dict:
         '''
         Delete a container.
         Check the id of the container.
@@ -385,6 +385,7 @@ class KubernetesContainerManager(ContainerManager):
                     namespace_name=data.network_name, ingress_name=ingress['ingress_name'])
             # delete lingering resources.
             KubernetesContainerHelper.delete_lingering_namespaces()
+            return {'container_id': data.container_id, 'status': 'Deleted'}
         except ApiException as ae:
             raise ApiException(f'Error occurred while deleting container: {str(ae)}') from ae
         except UnsupportedRuntimeEnvironment as ure:

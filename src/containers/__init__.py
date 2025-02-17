@@ -15,7 +15,7 @@ class ContainerManager(ABC):
 
     @classmethod
     @abstractmethod
-    def list(cls, data: ListContainerDataClass) -> None:
+    def list(cls, data: ListContainerDataClass) -> list[dict]:
         '''
         List all containers in a namespace.
         '''
@@ -23,7 +23,7 @@ class ContainerManager(ABC):
 
     @classmethod
     @abstractmethod
-    def get(cls, data: GetContainerDataClass) -> None:
+    def get(cls, data: GetContainerDataClass) -> dict:
         '''
         Get a container.
         '''
@@ -31,7 +31,7 @@ class ContainerManager(ABC):
 
     @classmethod
     @abstractmethod
-    def create(cls, data: CreateContainerDataClass) -> None:
+    def create(cls, data: CreateContainerDataClass) -> dict:
         '''
         Create a container.
         '''
@@ -39,7 +39,7 @@ class ContainerManager(ABC):
 
     @classmethod
     @abstractmethod
-    def delete(cls, data: DeleteContainerDataClass) -> None:
+    def delete(cls, data: DeleteContainerDataClass) -> dict:
         '''
         Delete a container.
         '''
