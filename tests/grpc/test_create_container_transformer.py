@@ -16,7 +16,7 @@ from src.containers.dataclasses.create_container_dataclass import CreateContaine
 from src.grpc.data_transformer.create_container_transformer import CreateContainerInputDataTransformer, CreateContainerOutputDataTransformer
 
 
-class TestDataTransformer(TestCase):
+class TestCreateContainerTransformer(TestCase):
 
     def setUp(self) -> None:
         print('Test: setUp TestCreateContainer')

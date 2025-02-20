@@ -26,7 +26,7 @@ class OutputDataTransformer(ABC):
     '''
     @classmethod
     @abstractmethod
-    def transform(cls, output_data: dict) -> Message:
+    def transform(cls, output_data: dict | list[dict]) -> Message:
         '''
         Transform dictionary to protobuf message
         '''
