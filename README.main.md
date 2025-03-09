@@ -18,21 +18,47 @@ Currently we support 2 environments:
 ### 1. Docker:
 
 ### 2. Kubernetes:
+
+NOTE: This setup is a little different on windows. Please use WSL in windows.
+    Basically, the script files wont work on windows and therefore, you need to manually setup.
+    The developer of this repository hates working with windows.
+
 1. To Develop inside kubernetes, you need to first install Docker Desktop and follow this guideline: `https://docs.docker.com/desktop/features/kubernetes/`.
+
 2. Once `kubectl` is setup and you have the `docker-desktop` cluster ready. We can proceed further.
+
 3. First of all, make sure `./infra/k8s/development/entrypoint-development.sh` is an executable.
     ```
     chmod +x ./infra/k8s/development/entrypoint-development.sh
     ```
+
 4. Type the following to build the docker image for k8s development:
     ```
     ./scripts/k8s/development/k8s-development-build.sh <docker-username> <docker-repository>
     ```
     This will build the docker image required for k8s development.
+
+    OR
+
+    You can also edit the `Makefile`. Set values for your username and repository name.
+    Then you can use the following command to build the docker image:
+    ```
+    make dev_build
+    ```
+
 5. Next you can setup the development environment by hitting this command:
     ```
     ./scripts/k8s/development/k8s-development-setup.sh <namespace> <absolute-path-to-current-working-directory>
     ```
+
+    OR
+
+    You can also edit the `Makefile`. Set values for your namespace and host directory.
+    Then you can use the following command to setup the development environment:
+    ```
+    make dev_setup
+    ```
+
 6. Now, that we have setup, we can check the pods with the following command:
     ```
     $ kubectl get pods -n <namespace>
@@ -40,23 +66,33 @@ Currently we support 2 environments:
     container-maker-development-d89777cf-h6zn2   1/1     Running   0          9s
     grpc-cert-generator-5fb88464fb-xwf8q         1/1     Running   0          9m34s
     ```
+
 8. If the pod is running, exec into the pod:
     ```
     kubectl exec -it container-maker-development-d89777cf-h6zn2 -n <namespace> -- bash
     ```
     This will be the terminal where you run your code in.
+
 9. Next from your local working directory, try creating a file.
     ```
     touch test1234
     ```
     This file should appear inside the pod. Type `ls` to check.
+
 10. Once the file appears, you are good. You can make changes to your current workspace folder and then run the code from within the pod.
+
 11. Finally, once done, you can delete everything by hitting this command:
     ```
     ./scripts/k8s/development/k8s-development-teardown.sh <namespace>
     ```
     Note: You might see some error messages on the terminal, you can ignore those.
+
 12. Next setup your kubernetes cluster.
+
+13. Also, to test things inside the pod, you can activate the virtualenv.
+    ```
+    source $(poetry env info --path)/bin/activate
+    ```
 
 # Setting up Kubernetes Cluster:
 1. If you do not have an ingress controller installed, you can install one by following this guide: `https://kubernetes.github.io/ingress-nginx/deploy/`.

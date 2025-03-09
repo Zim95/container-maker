@@ -3,20 +3,21 @@ FROM python:3.11-slim
 # Create the directory
 RUN mkdir app
 COPY . app/
-WORKDIR app
+WORKDIR /app
 
-# # Copy entrypoint script
-# COPY ./dockerfiles/entrypoint-debug.sh /entrypoint.sh
-# Run the existing entrypoint script in dockerfiles.
+# Make entrypoint script executable
 RUN chmod +x ./infra/k8s/development/entrypoint-development.sh
 
-# install dependencies
-RUN apt-get update && apt-get install -y build-essential
-RUN pip install -r requirements.txt
+# Install dependencies
+RUN apt-get update && apt-get install -y build-essential curl
 
-# install container maker spec
-RUN pip install container-maker-spec/
+# Install Poetry
+RUN curl -sSL https://install.python-poetry.org | python3 -
+ENV PATH="/root/.local/bin:${PATH}"
+
+# Install dependencies
+RUN poetry install --no-root
+RUN cd container-maker-spec && poetry install && cd ..
 
 # Use the entrypoint script
-ENTRYPOINT ["./infra/k8s/development/entrypoint-development.sh"]
-
+ENTRYPOINT ["bash", "-c", "./infra/k8s/development/entrypoint-development.sh"]
