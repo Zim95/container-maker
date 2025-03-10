@@ -31,29 +31,33 @@ def serve(
     use_ssl: bool,
 ) -> None:
     """
-    Server function
+    Server function that propagates errors to clients
     """
+    server = None
     try:
         # create server
-        server: grpc.Server = grpc.server(
+        server = grpc.server(
             ThreadPoolExecutor(max_workers=server_threads)
         )
 
         # add container maker servicer implementation
-        container_maker_servicer: ContainerMakerAPIServicerImpl = ContainerMakerAPIServicerImpl()
+        container_maker_servicer = ContainerMakerAPIServicerImpl()
         add_ContainerMakerAPIServicer_to_server(container_maker_servicer, server)
 
         # construct server_bind
-        server_bind: str = f"{address}:{port}"
+        server_bind = f"{address}:{port}"
 
         # add secure/insecure channel
         if not use_ssl:
             server.add_insecure_port(server_bind)
         else:
-            server_key: bytes = read_certs('SERVER_KEY', './cert/server.key')
-            server_cert: bytes = read_certs('SERVER_CRT', './cert/server.crt')
-            ca_cert: bytes = read_certs('CA_CRT', './cert/ca.crt')
-            credentials: grpc.ServerCredentials = grpc.ssl_server_credentials([(server_key, server_cert)], root_certificates=ca_cert)
+            server_key = read_certs('SERVER_KEY', './cert/server.key')
+            server_cert = read_certs('SERVER_CRT', './cert/server.crt')
+            ca_cert = read_certs('CA_CRT', './cert/ca.crt')
+            credentials = grpc.ssl_server_credentials(
+                [(server_key, server_cert)], 
+                root_certificates=ca_cert
+            )
             server.add_secure_port(server_bind, credentials)
 
         server.start()
@@ -61,14 +65,32 @@ def serve(
         server.wait_for_termination()
     except TimeoutError as te:
         logger.error(f'TimeoutError: {str(te)}')
+        raise grpc.RpcError(
+            code=grpc.StatusCode.DEADLINE_EXCEEDED,
+            details=f"Operation timed out: {str(te)}"
+        )
     except ApiException as ae:
         logger.error(f'ApiException: {str(ae)}')
+        raise grpc.RpcError(
+            code=grpc.StatusCode.INTERNAL,
+            details=f"Kubernetes API error: {str(ae)}"
+        )
     except UnsupportedRuntimeEnvironment as ure:
         logger.error(f'UnsupportedRuntimeEnvironment: {str(ure)}')
+        raise grpc.RpcError(
+            code=grpc.StatusCode.FAILED_PRECONDITION,
+            details=f"Unsupported runtime environment: {str(ure)}"
+        )
     except Exception as e:
         logger.error(f'Error occurred: {str(e)}')
+        raise grpc.RpcError(
+            code=grpc.StatusCode.UNKNOWN,
+            details=f"Unexpected error: {str(e)}"
+        )
     finally:
-        server.stop()
+        if server:
+            logger.info("Stopping server...")
+            server.stop(grace=None)  # Immediate shutdown
 
 
 @click.command()
