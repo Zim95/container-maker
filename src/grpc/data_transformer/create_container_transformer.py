@@ -26,6 +26,8 @@ class CreateContainerInputDataTransformer(InputDataTransformer):
                 publish_port=publish_info.publish_port,
                 target_port=publish_info.target_port,
                 protocol=publish_info.protocol,
+                # Add node port too, but only if it is not 0. In GRPC 0 is the default value for an unset integer field.
+                node_port=publish_info.node_port if publish_info.node_port != 0 else None,
             ) for publish_info in input_data.publish_information
         ]
         return CreateContainerDataClass(
