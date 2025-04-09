@@ -25,6 +25,7 @@ from src.resources.dataclasses.ingress.get_ingress_dataclass import GetIngressDa
 from src.resources.dataclasses.ingress.list_ingress_dataclass import ListIngressDataClass
 from src.resources.dataclasses.namespace.create_namespace_dataclass import CreateNamespaceDataClass
 from src.resources.dataclasses.namespace.delete_namespace_dataclass import DeleteNamespaceDataClass
+from src.resources.dataclasses.namespace.get_namespace_dataclass import GetNamespaceDataClass
 from src.resources.dataclasses.pod.create_pod_dataclass import CreatePodDataClass
 from src.resources.dataclasses.pod.delete_pod_dataclass import DeletePodDataClass
 from src.resources.dataclasses.pod.list_pod_dataclass import ListPodDataClass
@@ -163,6 +164,10 @@ class KubernetesContainerManager(ContainerManager):
         Services inside the ingress are not listed only ingresses are listed.
         Pods inside the service are not listed only services are listed.
         '''
+        # if namespace does not exist return empty list
+        namespace: dict = NamespaceManager.get(GetNamespaceDataClass(namespace_name=data.network_name))
+        if not namespace:
+            return []
         ingresses: list = IngressManager.list(ListIngressDataClass(**{'namespace_name': data.network_name}))
         ingress_services: list = [service for ingress in ingresses for service in ingress.get('associated_services', [])]
         ingress_pods: list = [pod for service in ingress_services for pod in service.get('associated_pods', [])]
@@ -217,6 +222,9 @@ class KubernetesContainerManager(ContainerManager):
         '''
         Check if id of the container is pod, service or ingress.
         '''
+        namespace: dict = NamespaceManager.get(GetNamespaceDataClass(namespace_name=data.network_name))
+        if not namespace:
+            return {}
         pod: dict | None = KubernetesContainerHelper.check_pod(namespace_name=data.network_name, container_id=data.container_id)
         service: dict | None = KubernetesContainerHelper.check_service(namespace_name=data.network_name, container_id=data.container_id)
         ingress: dict | None = KubernetesContainerHelper.check_ingress(namespace_name=data.network_name, container_id=data.container_id)
@@ -243,6 +251,10 @@ class KubernetesContainerManager(ContainerManager):
 
     @classmethod
     def validate_publish_information(cls, publish_information: list) -> None:
+        '''
+        Check for duplicate target and publish ports.
+        We should not have duplicate target and publish ports.
+        '''
         unique_target_ports: dict = defaultdict(int)
         unique_publish_ports: dict = defaultdict(int)
         for p in publish_information:
@@ -367,6 +379,9 @@ class KubernetesContainerManager(ContainerManager):
         4. We should however, delete the lingering resources if there are any, but as it is, thats how things should be.
         '''
         try:
+            namespace: dict = NamespaceManager.get(GetNamespaceDataClass(namespace_name=data.network_name))
+            if not namespace:
+                return {'container_id': data.container_id, 'status': f'Network: {data.network_name} does not exist.'}
             pod: dict | None = KubernetesContainerHelper.check_pod(
                 namespace_name=data.network_name, container_id=data.container_id)
             if pod:
