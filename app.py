@@ -87,10 +87,10 @@ def serve(
             code=grpc.StatusCode.UNKNOWN,
             details=f"Unexpected error: {str(e)}"
         )
-    finally:
+    except KeyboardInterrupt:
+        logger.info("Received interrupt signal. Shutting down gracefully...")
         if server:
-            logger.info("Stopping server...")
-            server.stop(grace=None)  # Immediate shutdown
+            server.stop(grace=5)  # give it 5 seconds to wrap up
 
 
 @click.command()
