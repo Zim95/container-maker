@@ -47,7 +47,7 @@ spec:
       serviceAccountName: resources-sa
       containers:
       - name: container-maker-development
-        image: zim95/container-maker-development:latest  # Your gRPC API Docker image
+        image: ${REPO_NAME}/container-maker-development:latest  # Your gRPC API Docker image
         ports:
         - containerPort: 50051  # gRPC default port
         env:

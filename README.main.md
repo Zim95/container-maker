@@ -44,8 +44,8 @@ NOTE: This setup is a little different on windows. Please use WSL in windows.
 
 5. Create an `env.mk` file in the root of the repository and set the following variables:
     ```
-    REPO_NAME=<your-github-username>
-    USER_NAME=<your-github-username>
+    REPO_NAME=<your-docker-username>
+    USER_NAME=<your-docker-username>
     NAMESPACE=<your-namespace>
     HOST_DIR=<absolute-path-to-your-local-working-directory>
     ```
@@ -62,7 +62,7 @@ NOTE: This setup is a little different on windows. Please use WSL in windows.
     ```
     This will setup the development environment.
 
-7. Get inside the pod:
+8. Get inside the pod:
     First check the pod status:
     ```
     kubectl get pods -n <your-namespace>  --watch
@@ -78,7 +78,7 @@ NOTE: This setup is a little different on windows. Please use WSL in windows.
     ```
     Now you are inside the pod.
 
-8. Now we test if your local working directory is mounted to the pod.
+9. Now we test if your local working directory is mounted to the pod.
     In your text editor outside the pod (in your local machine - working directory), create a new file and save it as `test.txt`. Check if that file is present in the pod.
     ```
     ls
@@ -87,17 +87,17 @@ NOTE: This setup is a little different on windows. Please use WSL in windows.
     This means that your local working directory is mounted to the pod. You can make changes in your working directory and they will be reflected in the pod.
     You are free to develop the code and test the workings.
 
-9. Now, we need to activate teh virtual env once we are inside the container.
+10. Now, we need to activate teh virtual env once we are inside the container.
     ```
     source $(poetry env info --path)/bin/activate
     ```
 
-10. Install all dependencies with poetry.
+11. Install all dependencies with poetry.
     ```
     poetry install
     ```
 
-11. Once done you can run the teardown script.
+12. Once done you can run the teardown script.
     ```
     make dev_teardown
     ```
