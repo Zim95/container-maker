@@ -48,6 +48,7 @@ spec:
       containers:
       - name: container-maker-development
         image: ${REPO_NAME}/container-maker-development:latest  # Your gRPC API Docker image
+        imagePullPolicy: Always
         ports:
         - containerPort: 50051  # gRPC default port
         env:
