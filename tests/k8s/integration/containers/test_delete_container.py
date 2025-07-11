@@ -81,6 +81,7 @@ class TestDeleteContainer(TestCase):
         '''
         print('Test: setUp TestDeleteContainer')
         self.namespace_name: str = NAMESPACE_NAME
+        self.container_name: str = 'test-container'
         self.image_name: str = 'zim95/ssh_ubuntu:latest'
         self.publish_information: list[PublishInformationDataClass] = [
             PublishInformationDataClass(publish_port=2222, target_port=22, protocol='TCP'),
