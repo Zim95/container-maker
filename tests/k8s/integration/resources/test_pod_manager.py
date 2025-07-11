@@ -32,16 +32,13 @@ import time
 import paramiko
 
 # modules
-from src.common import config
 from src.resources.dataclasses.namespace.delete_namespace_dataclass import DeleteNamespaceDataClass
 from src.resources.dataclasses.pod.delete_pod_dataclass import DeletePodDataClass
-from src.resources.dataclasses.volume.create_volume_dataclass import CreateVolumeDataClass, VolumeReclaimPolicy
 from src.resources.namespace_manager import NamespaceManager
 from src.resources.dataclasses.namespace.create_namespace_dataclass import CreateNamespaceDataClass
 from src.resources.pod_manager import PodManager
 from src.resources.dataclasses.pod.list_pod_dataclass import ListPodDataClass
 from src.resources.dataclasses.pod.create_pod_dataclass import CreatePodDataClass
-from src.resources.volume_manager import VolumeManager
 
 NAMESPACE_NAME: str = 'test-pod-manager'
 
@@ -57,6 +54,7 @@ class TestPodManager(TestCase):
         self.namespace_name: str = NAMESPACE_NAME
         self.target_ports: set = {22, 23}
         self.environment_variables: dict = {
+            "SSH_USERNAME": "ubuntu",
             "SSH_PASSWORD": "testpwd"
         }
         self.create_pod_data: CreatePodDataClass = CreatePodDataClass(
@@ -86,8 +84,7 @@ class TestPodManager(TestCase):
         self.assertEqual(pod['pod_namespace'], self.namespace_name)
         self.assertEqual(pod['pod_ip'] is not None, True)
         self.assertEqual(len(pod['pod_ports']), 2)  # since we have 2 target ports.
-        self.assertEqual(pod['pod_labels'].get('app'), self.pod_name) # we have only one label, the app label which is the pod name.
-        self.assertEqual(pod['associated_volumes'], [])
+        self.assertEqual(pod['pod_labels'].get('app'), self.pod_name) # we have only one label, the app label which is the pod name
 
         # list all pods -> should have a list.
         pods_new: list[dict] = PodManager.list(ListPodDataClass(**{'namespace_name': self.namespace_name}))
@@ -189,38 +186,6 @@ class TestPodManager(TestCase):
             'namespace_name': self.namespace_name,
             'pod_name': self.pod_name
         }))
-
-    # def test_pod_with_volumes(self) -> None:
-    #     '''
-    #     Create a volume and then see if has been attached to the pod.
-    #     Create a file. Simulate pod failure and see if the file still exists in the pod.
-    #     '''
-    #     volume: dict = VolumeManager.create(CreateVolumeDataClass(
-    #         **{
-    #             'namespace_name': self.namespace_name,
-    #             'volume_name': 'test-volume',
-    #             'nfs_server': config.NFS_IP,
-    #             'nfs_path': config.NFS_PATH,
-    #             'reclaim_policy': VolumeReclaimPolicy.RETAIN,
-    #         }
-    #     ))
-    #     self.create_pod_data.volume_config = volume
-    #     pod: dict = PodManager.create(self.create_pod_data)
-    #     # create a file in the pod. use exec command to create a file in the pod.
-
-
-    #     # install vim in the pod
-    #     # delete the pod
-    #     # recreate the pod with the same volume config
-    #     # check if the file still exists
-    #     # check if vim is installed
-
-    def test_websocket_into_pod(self) -> None:
-        '''
-        Test if you can connect to the websocket of the pod.
-        Result: Should get the output "Websocket test successful".
-        '''
-        print('Test: test_websocket_into_pod')
 
 
 class ZZZ_Cleanup(TestCase):

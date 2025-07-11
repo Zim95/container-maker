@@ -6,7 +6,7 @@ from src.resources import KubernetesResourceManager
 from src.resources.dataclasses.pod.create_pod_dataclass import CreatePodDataClass
 from src.resources.dataclasses.pod.list_pod_dataclass import ListPodDataClass
 from src.common.exceptions import UnsupportedRuntimeEnvironment
-from src.resources.resource_config import POD_IP_TIMEOUT_SECONDS
+from src.resources.resource_config import POD_IP_TIMEOUT_SECONDS, POD_UPTIME_TIMEOUT, POD_TERMINATION_TIMEOUT
 
 # third party
 from kubernetes.client.rest import ApiException
@@ -16,9 +16,7 @@ from kubernetes.client import V1Pod
 from kubernetes.client import V1ObjectMeta
 from kubernetes.client import V1PodSpec
 from kubernetes.client import V1Container
-from kubernetes.client import V1VolumeMount
-from kubernetes.client import V1Volume
-from kubernetes.client import V1PersistentVolumeClaimVolumeSource
+from kubernetes.client import V1SecurityContext
 
 
 class PodManager(KubernetesResourceManager):
@@ -42,23 +40,6 @@ class PodManager(KubernetesResourceManager):
         return ports
 
     @classmethod
-    def get_pod_volumes(cls, pod: V1Pod) -> list[str]:
-        """
-        Get all volume names configured for a pod
-        Returns list of volume names (which can be used with VolumeManager.get)
-        """
-        volumes: list[str] = []
-        if pod.spec.volumes:
-            for volume in pod.spec.volumes:
-                if volume.persistent_volume_claim:  # Only include PVC volumes
-                    # Remove '-claim' suffix to get original volume name
-                    volume_name = volume.persistent_volume_claim.claim_name
-                    if volume_name.endswith('-claim'):
-                        volume_name = volume_name[:-6]  # Remove '-claim' suffix
-                    volumes.append(volume_name)
-        return volumes
-
-    @classmethod
     def list(cls, data: ListPodDataClass) -> list[dict]:
         try:
             cls.check_kubernetes_client()
@@ -70,7 +51,6 @@ class PodManager(KubernetesResourceManager):
                     'pod_ip': pod.status.pod_ip,
                     'pod_ports': cls.get_pod_ports(pod),
                     'pod_labels': pod.metadata.labels or {},
-                    'associated_volumes': cls.get_pod_volumes(pod),
                 }
                 for pod in cls.client.list_namespaced_pod(namespace=data.namespace_name).items
             ]
@@ -98,7 +78,6 @@ class PodManager(KubernetesResourceManager):
                 'pod_ip': response.status.pod_ip,
                 'pod_ports': cls.get_pod_ports(response),
                 'pod_labels': response.metadata.labels or {},
-                'associated_volumes': cls.get_pod_volumes(response),
             }
         except ApiException as ae:
             if ae.status == 404:
@@ -124,7 +103,7 @@ class PodManager(KubernetesResourceManager):
         raise TimeoutError(f"Timeout waiting for pod {pod_name} IP address after {timeout_seconds} seconds")
 
     @classmethod
-    def poll_status(cls, namespace_name: str, pod_name: str, target_status: str, timeout_seconds: float = 20.0) -> None:
+    def poll_status(cls, namespace_name: str, pod_name: str, target_status: str, timeout_seconds: float = POD_UPTIME_TIMEOUT) -> None:
         '''
         Poll pod status until it matches target_status or timeout is reached.
         
@@ -185,20 +164,9 @@ class PodManager(KubernetesResourceManager):
                     }
                 ),
                 spec=V1PodSpec(
-                    init_containers=[
-                        # This init container will ensure the directories exist in the PVC.
-                        V1Container(
-                            name="init-create-dirs",
-                            image="alpine:latest",
-                            command=["sh", "-c", "mkdir -p /mnt/home /mnt/local /mnt/opt"],
-                            volume_mounts=[
-                                V1VolumeMount(
-                                    name=data.volume_config['volume']['volume_name'],
-                                    mount_path="/mnt"  # Mount the entire PVC here (without subPath)
-                                )
-                            ]
-                        )
-                    ] if data.volume_config else None,
+                    security_context=V1SecurityContext(
+                        privileged=True
+                    ),
                     # Main container
                     containers=[
                         V1Container(
@@ -206,33 +174,11 @@ class PodManager(KubernetesResourceManager):
                             image=data.image_name,
                             ports=target_ports,
                             env=environment_variables,
-                            volume_mounts=[
-                                V1VolumeMount(
-                                    name=data.volume_config['volume']['volume_name'],
-                                    mount_path="/home",  # for all user data
-                                    sub_path='home'
-                                ),
-                                V1VolumeMount(
-                                    name=data.volume_config['volume']['volume_name'],
-                                    mount_path="/usr/local",  # for installed applications
-                                    sub_path='local'
-                                ),
-                                V1VolumeMount(
-                                    name=data.volume_config['volume']['volume_name'],
-                                    mount_path="/opt",  # for all installed applications
-                                    sub_path='opt'
-                                )
-                            ] if data.volume_config else None,
+                            security_context=V1SecurityContext(
+                                privileged=True
+                            ),
                         )
-                    ],
-                    volumes=[
-                        V1Volume(
-                            name=data.volume_config['volume']['volume_name'],
-                            persistent_volume_claim=V1PersistentVolumeClaimVolumeSource(
-                                claim_name=data.volume_config['claim']['claim_name']
-                            )
-                        )
-                    ] if data.volume_config else None
+                    ]
                 )
             )
             # create the actual pod
@@ -246,7 +192,6 @@ class PodManager(KubernetesResourceManager):
                 "pod_ip": cls.get_pod_ip(data.namespace_name, data.pod_name),
                 "pod_ports": cls.get_pod_ports(pod),
                 "pod_labels": pod.metadata.labels or {},
-                "associated_volumes": cls.get_pod_volumes(pod),
             }
         except TimeoutError as te:
             raise TimeoutError(te) from te
@@ -258,7 +203,7 @@ class PodManager(KubernetesResourceManager):
             raise Exception(f'Unkown error occured: {str(e)}') from e
 
     @classmethod
-    def poll_termination(cls, namespace_name: str, pod_name: str, timeout_seconds: float = 2.0) -> None:
+    def poll_termination(cls, namespace_name: str, pod_name: str, timeout_seconds: float = POD_TERMINATION_TIMEOUT) -> None:
         is_terminated: bool = False
         while is_terminated != True:
             pod: dict = cls.get(GetPodDataClass(**{'namespace_name': namespace_name, 'pod_name': pod_name}))

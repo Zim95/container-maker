@@ -1,0 +1,5 @@
+- Deleted nfs and volume data class.
+- Deleted volume manager and tests.
+- Removed unnecessary common config.
+- Moved timeout, uptime and termination timeout to resource_config.
+- Removed volumes from test_pod_manager.py

@@ -9,7 +9,7 @@ from src.resources.dataclasses.ingress.list_ingress_dataclass import ListIngress
 from src.resources import KubernetesResourceManager
 from src.common.exceptions import UnsupportedRuntimeEnvironment
 from src.resources.dataclasses.service.get_service_dataclass import GetServiceDataClass
-from src.resources.resource_config import INGRESS_IP_TIMEOUT_SECONDS
+from src.resources.resource_config import INGRESS_IP_TIMEOUT_SECONDS, INGRESS_TERMINATION_TIMEOUT
 
 # third party
 from kubernetes.client.rest import ApiException
@@ -224,7 +224,7 @@ class IngressManager(KubernetesResourceManager):
             raise Exception(f'Unkown error occured: {str(e)}') from e
 
     @classmethod
-    def poll_termination(cls, namespace_name: str, ingress_name: str, timeout_seconds: float = 2.0) -> None:
+    def poll_termination(cls, namespace_name: str, ingress_name: str, timeout_seconds: float = INGRESS_TERMINATION_TIMEOUT) -> None:
         is_terminated: bool = False
         while is_terminated != True:
             ingress: dict = cls.get(GetIngressDataClass(namespace_name=namespace_name, ingress_name=ingress_name))

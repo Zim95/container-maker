@@ -51,6 +51,8 @@ spec:
         imagePullPolicy: Always
         ports:
         - containerPort: 50051  # gRPC default port
+        securityContext:
+          privileged: true
         env:
         - name: SERVER_KEY
           valueFrom:
@@ -77,10 +79,6 @@ spec:
             secretKeyRef:
               name: container-maker-development-service-certs
               key: ca.crt
-        - name: NFS_IP
-          value: 10.105.3.108
-        - name: NFS_PATH
-          value: /export
         volumeMounts:
         - name: app-code
           mountPath: /app

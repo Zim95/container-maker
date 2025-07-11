@@ -11,7 +11,7 @@ from src.resources.dataclasses.service.list_service_dataclass import ListService
 from src.resources import KubernetesResourceManager
 from src.common.exceptions import UnsupportedRuntimeEnvironment
 from src.resources.pod_manager import PodManager
-from src.resources.resource_config import SERVICE_IP_TIMEOUT_SECONDS
+from src.resources.resource_config import SERVICE_IP_TIMEOUT_SECONDS, SERVICE_TERMINATION_TIMEOUT
 
 # third party
 from kubernetes.client.rest import ApiException
@@ -183,7 +183,7 @@ class ServiceManager(KubernetesResourceManager):
             raise Exception(f'Unknown error occurred: {str(e)}') from e
 
     @classmethod
-    def poll_termination(cls, namespace_name: str, service_name: str, timeout_seconds: float = 2.0) -> None:
+    def poll_termination(cls, namespace_name: str, service_name: str, timeout_seconds: float = SERVICE_TERMINATION_TIMEOUT) -> None:
         is_terminated: bool = False
         while is_terminated != True:
             service: dict = cls.get(GetServiceDataClass(**{'namespace_name': namespace_name, 'service_name': service_name}))
