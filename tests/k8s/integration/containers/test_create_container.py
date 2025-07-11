@@ -10,7 +10,6 @@ from src.resources.dataclasses.pod.list_pod_dataclass import ListPodDataClass
 from src.resources.dataclasses.service.create_service_dataclass import PublishInformationDataClass
 from src.resources.dataclasses.service.list_service_dataclass import ListServiceDataClass
 from src.resources.ingress_manager import IngressManager
-from src.resources.namespace_manager import NamespaceManager
 from src.resources.pod_manager import PodManager
 from src.resources.service_manager import ServiceManager
 

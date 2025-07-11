@@ -33,7 +33,6 @@ from src.resources.dataclasses.service.create_service_dataclass import CreateSer
 from src.resources.dataclasses.service.delete_service_dataclass import DeleteServiceDataClass
 from src.resources.dataclasses.service.get_service_dataclass import GetServiceDataClass
 from src.resources.dataclasses.service.list_service_dataclass import ListServiceDataClass
-from src.resources.dataclasses.volume.list_volume_dataclass import ListVolumeDataClass
 from src.resources.namespace_manager import NamespaceManager
 from src.resources.pod_manager import PodManager
 from src.resources.service_manager import ServiceManager
@@ -42,8 +41,6 @@ from src.containers import ContainerManager
 
 # kubernetes
 from kubernetes.client.exceptions import ApiException
-
-from src.resources.volume_manager import VolumeManager
 
 
 class KubernetesContainerHelper:
@@ -146,8 +143,8 @@ class KubernetesContainerHelper:
             ingresses: list = IngressManager.list(ListIngressDataClass(**{'namespace_name': namespace_name}))
             if not (pods or services or ingresses):
                 NamespaceManager.delete(
-                    DeleteNamespaceDataClass(namespace_name=namespace_name
-                ))
+                    DeleteNamespaceDataClass(namespace_name=namespace_name)
+                )
 
 
 class KubernetesContainerManager(ContainerManager):
@@ -316,7 +313,7 @@ class KubernetesContainerManager(ContainerManager):
                     namespace_name=data.network_name,
                     ingress_name=f'{data.container_name}-ingress',
                     service_name=f'{data.container_name}-service',
-                    host=config.HOST,
+                    host=config.INGRESS_HOST,
                     service_ports=service['service_ports']
                 ))
                 final_container = ingress
