@@ -7,5 +7,10 @@ POD_UPTIME_TIMEOUT: float = 20.0
 POD_IP_TIMEOUT_SECONDS: float = 20.0
 POD_TERMINATION_TIMEOUT: float = 20.0
 
+# Timeout for service uptime
 SERVICE_IP_TIMEOUT_SECONDS: float = 20.0
 SERVICE_TERMINATION_TIMEOUT: float = 20.0
+
+# Saving the Pod
+SNAPSHOT_DIR: str = '/mnt/snapshot'
+SNAPSHOT_FILE_NAME: str = 'full_fs_snapshot'

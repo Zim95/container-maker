@@ -1,5 +1,8 @@
-- Deleted nfs and volume data class.
-- Deleted volume manager and tests.
-- Removed unnecessary common config.
-- Moved timeout, uptime and termination timeout to resource_config.
-- Removed volumes from test_pod_manager.py
+- development.yaml - Added REPO_NAME and REPO_PASSWORD
+- k8s-development-setup.sh - Added REPO_PASSWORD env variable
+- create_pod_dataclass.py - Removed volume config
+- save_pod_dataclass.py - Added save pod dataclass
+- resources/__init__.py - Added SaveResourceDataClass
+- pod_manager.py - Added SaveUtility and save functionality in PodManager
+- resource_config.py - Added SNAPSHOT_DIR and SNAPSHOT_FILENAME
+- Makefile - Added $(REPO_PASSWORD) in Makefile

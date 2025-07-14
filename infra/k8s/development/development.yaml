@@ -79,6 +79,10 @@ spec:
             secretKeyRef:
               name: container-maker-development-service-certs
               key: ca.crt
+        - name: REPO_NAME
+          value: ${REPO_NAME}
+        - name: REPO_PASSWORD
+          value: ${REPO_PASSWORD}
         volumeMounts:
         - name: app-code
           mountPath: /app

@@ -1,6 +1,6 @@
 # built-ins
 from dataclasses import dataclass, field
-from typing import Optional, Dict, Set
+from typing import Dict, Set
 
 # modules
 from src.resources.dataclasses import CreateResourceDataClass
@@ -16,4 +16,3 @@ class CreatePodDataClass(CreateResourceDataClass):
     image_name: str  # The name of the image
     target_ports: Set[int] = field(default_factory=set)  # Set of target ports for the pod
     environment_variables: Dict[str, str] = field(default_factory=dict)  # Environment variables for the pod
-    volume_config: Optional[Dict] = field(default_factory=dict)  # Volume data for the pod

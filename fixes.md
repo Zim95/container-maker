@@ -105,3 +105,50 @@ Would you like a deeper dive into securing SSH inside Kubernetes? 🚀
 
 2. Add emptyDir volume to the created pods.
 3. Add a privileged sidecar with docker running in it.
+
+
+# Save logic
+1. The main container needs to run this command to snapshot the entire filesystem into a tar file:
+  ```bash
+  tar --exclude=/proc --exclude=/sys --exclude=/dev --exclude=/mnt/snapshot -czvf /mnt/snapshot/full_fs_snapshot.tar.gz /
+  ```
+
+2. The side car then unpacks the tar into a directory:
+  ```bash
+  tar -xzvf /mnt/snapshot/full_fs_snapshot.tar.gz -C /mnt/snapshot/rootfs
+  ```
+
+3. Then the sidecar creates this Dockerfile in `rootfs`:
+  ```docker
+  FROM scratch
+  COPY . /
+  ENTRYPOINT ["/entrypoint.sh"]
+  ```
+
+4. Then it executes these commands from within rootfs:
+  ```bash
+  docker login -u <username>
+  ```
+  This needs a password as well, since we cannot type the password manually, since we are doing this through code.
+  username will be an env variable and so will the password.
+
+  Then it builds the image and tags it:
+  ```bash
+  docker image built -t <container-name>-image:latest <build-context>
+  ```
+  Container name needs to be an env variable as well.
+  Since this command might be running from / and not from `/mnt/snapshot/rootfs`, the build context might be different.
+
+  ```bash
+  docker image tag <container-name>-image:latest <repo>/<container-name>-image:latest
+  ```
+  The repo name is also an environment variable.
+
+5. Then finally push the image:
+  ```bash
+  docker push <repo>/<container-name>-image:latest
+  ```
+
+6. Once done, it will give back the image name.
+
+7. I want all of this automated in the save function in pod manager.

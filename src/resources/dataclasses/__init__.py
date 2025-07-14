@@ -32,3 +32,11 @@ class DeleteResourceDataClass:
     Base Data class for deleting a resource.
     '''
     pass
+
+
+@dataclass
+class SaveResourceDataClass:
+    '''
+    Base Data class for saving a resource. Only used in Pods.
+    '''
+    pass
