@@ -1,3 +1,6 @@
+# modules
+from src.common.config import REPO_NAME
+
 # Timeout for getting IP addresses
 INGRESS_IP_TIMEOUT_SECONDS: float = 60.0
 INGRESS_TERMINATION_TIMEOUT: float = 20.0
@@ -14,3 +17,5 @@ SERVICE_TERMINATION_TIMEOUT: float = 20.0
 # Saving the Pod
 SNAPSHOT_DIR: str = '/mnt/snapshot'
 SNAPSHOT_FILE_NAME: str = 'full_fs_snapshot'
+SNAPSHOT_SIDECAR_NAME: str = 'snapshot-sidecar'
+SNAPSHOT_SIDECAR_IMAGE_NAME: str = f'{REPO_NAME}/snapshot_sidecar:latest'

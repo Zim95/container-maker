@@ -1,8 +1,4 @@
-- development.yaml - Added REPO_NAME and REPO_PASSWORD
-- k8s-development-setup.sh - Added REPO_PASSWORD env variable
-- create_pod_dataclass.py - Removed volume config
-- save_pod_dataclass.py - Added save pod dataclass
-- resources/__init__.py - Added SaveResourceDataClass
-- pod_manager.py - Added SaveUtility and save functionality in PodManager
-- resource_config.py - Added SNAPSHOT_DIR and SNAPSHOT_FILENAME
-- Makefile - Added $(REPO_PASSWORD) in Makefile
+- resource_config.py - Added REPO_NAME as an env.
+- pod_manager.py - Added run_command method to SaveUtility. Added sidecar to pod, Added save pod template, Added get_container_ports, get_pod_containers, get_pod_response.
+- test_pod_manager.py - Added tests for sidecar pod. Added template for testing save.
+- test_save_utility.py - Added template for testing SaveUtility.

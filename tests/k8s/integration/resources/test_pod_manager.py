@@ -39,6 +39,8 @@ from src.resources.dataclasses.namespace.create_namespace_dataclass import Creat
 from src.resources.pod_manager import PodManager
 from src.resources.dataclasses.pod.list_pod_dataclass import ListPodDataClass
 from src.resources.dataclasses.pod.create_pod_dataclass import CreatePodDataClass
+from src.common.config import REPO_NAME
+from src.resources.resource_config import SNAPSHOT_SIDECAR_NAME, SNAPSHOT_SIDECAR_IMAGE_NAME
 
 NAMESPACE_NAME: str = 'test-pod-manager'
 
@@ -49,7 +51,7 @@ class TestPodManager(TestCase):
         Create a namespace.
         '''
         print('Setup: setUp')
-        self.image_name: str = 'zim95/ssh_ubuntu:latest'
+        self.image_name: str = f'{REPO_NAME}/ssh_ubuntu:latest'
         self.pod_name: str = 'test-ssh-pod'
         self.namespace_name: str = NAMESPACE_NAME
         self.target_ports: set = {22, 23}
@@ -66,7 +68,7 @@ class TestPodManager(TestCase):
         )
         NamespaceManager.create(CreateNamespaceDataClass(**{'namespace_name': self.namespace_name}))
 
-    def test_creation_and_removal_of_pods(self) -> None:
+    def test_a_creation_and_removal_of_pods(self) -> None:
         '''
         Test the creation of pods and their removal.
         Runs: list, create and delete methods to test behavior.
@@ -85,6 +87,17 @@ class TestPodManager(TestCase):
         self.assertEqual(pod['pod_ip'] is not None, True)
         self.assertEqual(len(pod['pod_ports']), 2)  # since we have 2 target ports.
         self.assertEqual(pod['pod_labels'].get('app'), self.pod_name) # we have only one label, the app label which is the pod name
+        self.assertEqual(len(pod['pod_containers']), 2)  # there should be 2 containers in the pod: main, sidecar.
+
+        # pod container names
+        pod_container_names: list[str] = [container['container_name'] for container in pod['pod_containers']]
+        self.assertEqual(SNAPSHOT_SIDECAR_NAME in pod_container_names, True)
+        self.assertEqual(self.pod_name in pod_container_names, True)
+
+        # pod container images
+        pod_container_images: list[str] = [container['container_image'] for container in pod['pod_containers']]
+        self.assertEqual(SNAPSHOT_SIDECAR_IMAGE_NAME in pod_container_images, True)
+        self.assertEqual(self.image_name in pod_container_images, True)
 
         # list all pods -> should have a list.
         pods_new: list[dict] = PodManager.list(ListPodDataClass(**{'namespace_name': self.namespace_name}))
@@ -95,7 +108,7 @@ class TestPodManager(TestCase):
         pods_last: list[dict] = PodManager.list(ListPodDataClass(**{'namespace_name': self.namespace_name}))
         assert pods_last == []
 
-    def test_duplicate_pod_creation(self) -> None:
+    def test_b_duplicate_pod_creation(self) -> None:
         '''
         Test the creation of a pod with the same name as an existing pod.
         Result: Should return the existing pod instead of creating a duplicate.
@@ -126,7 +139,7 @@ class TestPodManager(TestCase):
             'pod_name': self.pod_name
         }))
 
-    def test_ssh_into_pod(self) -> None:
+    def test_c_ssh_into_pod(self) -> None:
         '''
         Test if you can ssh into the pod.
         Result: Should get the output "SSH test successful".
@@ -149,7 +162,7 @@ class TestPodManager(TestCase):
             # Connect to the pod
             ssh.connect(
                 hostname=pod['pod_ip'],
-                username='ubuntu',
+                username=self.environment_variables['SSH_USERNAME'],
                 password=self.environment_variables['SSH_PASSWORD'],
                 port=22
             )
@@ -169,7 +182,7 @@ class TestPodManager(TestCase):
                 'pod_name': self.pod_name
             }))
 
-    def test_pod_status_timeout(self) -> None:
+    def test_d_pod_status_timeout(self) -> None:
         '''
         Test if the pod status timeout is working.
         '''
@@ -179,13 +192,22 @@ class TestPodManager(TestCase):
             PodManager.create(self.create_pod_data)
         except TimeoutError as e:
             self.assertEqual(str(e), f"Timeout waiting for pod {self.pod_name} to reach status Running after {20.0} seconds")
-            self.create_pod_data.image_name = 'zim95/ssh_ubuntu:latest'  # set it back to the normal image for the rest of the tests.
+            self.create_pod_data.image_name = f'{REPO_NAME}/ssh_ubuntu:latest'  # set it back to the normal image for the rest of the tests.
         # delete the existing pod. Otherwise the new pod will not be created. it will simply fetch the existing pod.
         # the existing pod will have the same image error and the rest of the tests will not work.
         PodManager.delete(DeletePodDataClass(**{
             'namespace_name': self.namespace_name,
             'pod_name': self.pod_name
         }))
+
+    def test_e_save_pod(self) -> None:
+        '''
+        Test the save pod method.
+        '''
+        print('Test: test_save_pod')
+        # create a pod
+        pod: dict = PodManager.create(self.create_pod_data)
+
 
 
 class ZZZ_Cleanup(TestCase):
