@@ -1,5 +1,7 @@
 # modules
 import time
+import gc  # this is because we use the stream function which does not close sockets properly. So we manually collect them using gc.
+import warnings  # this is to capture resource warnings.
 from src.resources.dataclasses.pod.delete_pod_dataclass import DeletePodDataClass
 from src.resources.dataclasses.pod.get_pod_dataclass import GetPodDataClass
 from src.resources import KubernetesResourceManager
@@ -23,9 +25,119 @@ from kubernetes.client import V1SecurityContext
 from kubernetes.client import V1Volume
 from kubernetes.client import V1EmptyDirVolumeSource
 from kubernetes.client import V1VolumeMount
+from kubernetes.stream import ws_client
 from kubernetes.stream import stream
 
-# NOTE: Check if sidecar and main pod share a snapshot volume in SaveUtility.
+
+class ExecUtility(KubernetesResourceManager):
+    '''
+    Utility class for executing commands in a pod.
+    '''
+
+    @classmethod
+    def run_command(cls, pod_name: str, namespace_name: str, container_name: str, command: str) -> str:
+        '''
+        Exec a command into a pod container and return the output
+        :params: pod_name: str - Name of the pod
+        :params: namespace_name: str - Name of the namespace  
+        :params: container_name: str - Name of the container within the pod
+        :params: command: str - Command to execute
+        :returns: str - Command output
+        '''
+        try:
+            cls.check_kubernetes_client()
+
+            # Temporarily suppress the specific ResourceWarning
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore", category=ResourceWarning, message=".*unclosed.*ssl.SSLSocket.*")
+                # For simple output, use preload_content=True
+                output: str = stream(
+                    cls.client.connect_get_namespaced_pod_exec,
+                    pod_name,
+                    namespace_name,
+                    container=container_name,
+                    command=["/bin/bash", "-c", command],
+                    stderr=True,
+                    stdin=False,
+                    stdout=True,
+                    tty=False,
+                    _preload_content=True
+                )
+                # Force garbage collection to clean up any lingering connections
+                gc.collect()
+            return output.strip() if output else "" 
+        except TimeoutError as te:
+            raise TimeoutError(te) from te
+        except ApiException as ae:
+            raise ApiException(f'Error occured while executing command in pod: {str(ae)}') from ae
+        except Exception as e:
+            raise Exception(f'Unknown error occured: {str(e)}') from e
+
+    @classmethod
+    def run_command_with_stream(cls, pod_name: str, namespace_name: str, container_name: str, command: str, timeout_minutes: int = 10) -> str:
+        '''
+        Exec a command into a pod container with real-time streaming output.
+        :params: pod_name: str - Name of the pod
+        :params: namespace_name: str - Name of the namespace  
+        :params: container_name: str - Name of the container within the pod
+        :params: command: str - Command to execute
+        :params: timeout_minutes: int - Maximum time to wait for command completion
+        :returns: str - Complete command output
+        '''
+        try:
+            cls.check_kubernetes_client()
+            # Suppress ResourceWarning for streaming connections
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore", category=ResourceWarning, message=".*unclosed.*ssl.SSLSocket.*")
+                # Create WebSocket connection with _preload_content=False for streaming
+                stream_client: ws_client.WSClient = stream(
+                    cls.client.connect_get_namespaced_pod_exec,
+                    pod_name,
+                    namespace_name,
+                    container=container_name,
+                    command=["/bin/bash", "-c", command],
+                    stderr=True,
+                    stdin=False,
+                    stdout=True,
+                    tty=False,
+                    _preload_content=False  # This gives us a WebSocket client for streaming
+                )
+                try:
+                    output: str = ""
+                    start_time: float = time.time()
+                    timeout_seconds: float = timeout_minutes * 60
+                    while stream_client.is_open():
+                        # Check for timeout
+                        if time.time() - start_time > timeout_seconds:
+                            raise TimeoutError(f"Command timed out after {timeout_minutes} minutes")
+                        stream_client.update(timeout=5)
+                        if stream_client.peek_stdout():
+                            stdout_chunk: str = stream_client.read_stdout()
+                            output += stdout_chunk
+                            if stdout_chunk.strip():
+                                print(f"[{container_name}] {stdout_chunk.strip()}")
+                        if stream_client.peek_stderr():
+                            stderr_chunk: str = stream_client.read_stderr()
+                            output += stderr_chunk
+                            if stderr_chunk.strip():
+                                print(f"[{container_name}] {stderr_chunk.strip()}")
+                    return output.strip()
+                finally:
+                    # Always close the stream client
+                    try:
+                        stream_client.close()
+                    except Exception:
+                        pass
+                    # Force garbage collection to clean up any lingering connections
+                    gc.collect()
+        except TimeoutError as te:
+            raise TimeoutError(te) from te
+        except ApiException as ae:
+            raise ApiException(f'Error occured while executing command in pod: {str(ae)}') from ae
+        except Exception as e:
+            raise Exception(f'Unknown error occured: {str(e)}') from e
+
+
 class SaveUtility(KubernetesResourceManager):
     '''
     Utility class for saving a pod.
@@ -35,39 +147,6 @@ class SaveUtility(KubernetesResourceManager):
 
     Therefore, make sure all containers (i.e. main containers and sidecars) are available before calling this utility.
     '''
-
-    @classmethod
-    def run_command(cls, pod_name: str, namespace_name: str, container_name: str, command: str) -> str:
-        '''
-        Exec a command into a pod container and return the output.
-        :params: pod_name: str - Name of the pod
-        :params: namespace_name: str - Name of the namespace  
-        :params: container_name: str - Name of the container within the pod
-        :params: command: str - Command to execute
-        :returns: str - Command output
-        '''
-        try:
-            cls.check_kubernetes_client()
-            result = stream(
-                cls.client.connect_get_namespaced_pod_exec,
-                pod_name,
-                namespace_name,
-                container=container_name,
-                command=["/bin/bash", "-c", command],
-                stderr=True,
-                stdin=False,
-                stdout=True,
-                tty=False
-            )
-            return result
-        except TimeoutError as te:
-            raise TimeoutError(te) from te
-        except ApiException as ae:
-            raise ApiException(f'Error occured while creating pod: {str(ae)}') from ae
-        except UnsupportedRuntimeEnvironment as ure:
-            raise UnsupportedRuntimeEnvironment(f'Unsupported Run time Environment: {str(ure)}') from ure
-        except Exception as e:
-            raise Exception(f'Unkown error occured: {str(e)}') from e
 
     @classmethod
     def check_shared_volume(cls, data: SavePodDataClass) -> bool:
@@ -83,14 +162,17 @@ class SaveUtility(KubernetesResourceManager):
             check_shared_volume_cmd: str = (
                 f"ls -l {SNAPSHOT_DIR}"
             )
-            breakpoint()
             # Both containers are in the same pod (data.pod_name)
             # but we exec into different containers
-            sidecar_response: str = cls.run_command(data.pod_name, data.namespace_name, data.sidecar_pod_name, check_shared_volume_cmd)
-            main_response: str = cls.run_command(data.pod_name, data.namespace_name, data.pod_name, check_shared_volume_cmd)
-            if sidecar_response == main_response:
-                return True
-            return False
+            sidecar_response: str = ExecUtility.run_command(data.pod_name, data.namespace_name, data.sidecar_pod_name, check_shared_volume_cmd)
+            main_response: str = ExecUtility.run_command(data.pod_name, data.namespace_name, data.pod_name, check_shared_volume_cmd)
+            
+            # Check if both commands return the same output
+            # Basically, both containers should have the volume and return: total 0,
+            # If they don't have it, the command returns: No such file or directory
+            if sidecar_response != main_response:
+                return False
+            return True
         except TimeoutError as te:
             raise TimeoutError(te) from te
         except ApiException as ae:
@@ -114,7 +196,7 @@ class SaveUtility(KubernetesResourceManager):
                 f"tar --exclude=/proc --exclude=/sys --exclude=/dev --exclude={SNAPSHOT_DIR} "
                 f"-czvf {SNAPSHOT_DIR}/{SNAPSHOT_FILE_NAME}.tar.gz /"
             )
-            cls.run_command(data.pod_name, data.namespace_name, data.pod_name, tar_cmd)
+            ExecUtility.run_command(data.pod_name, data.namespace_name, data.pod_name, tar_cmd)
             print(f"{data.pod_name}: Filesystem snapshot created in main container.")
         except TimeoutError as te:
             raise TimeoutError(te) from te
@@ -141,7 +223,7 @@ class SaveUtility(KubernetesResourceManager):
                 f"mkdir -p {SNAPSHOT_DIR}/rootfs && "
                 f"tar -xzvf {SNAPSHOT_DIR}/{SNAPSHOT_FILE_NAME}.tar.gz -C {SNAPSHOT_DIR}/rootfs"
             )
-            cls.run_command(data.sidecar_pod_name, data.namespace_name, data.sidecar_pod_name, untar_cmd)
+            ExecUtility.run_command(data.pod_name, data.namespace_name, data.sidecar_pod_name, untar_cmd)
             print(f"{data.sidecar_pod_name}: Filesystem snapshot unpacked into sidecar pod.")
         except TimeoutError as te:
             raise TimeoutError(te) from te
@@ -168,7 +250,7 @@ class SaveUtility(KubernetesResourceManager):
                     "ENTRYPOINT [\"/entrypoint.sh\"]\n"
                 )
             echo_dockerfile_cmd: str = f"echo '{dockerfile_content}' > {SNAPSHOT_DIR}/rootfs/Dockerfile"
-            cls.run_command(data.sidecar_pod_name, data.namespace_name, data.sidecar_pod_name, echo_dockerfile_cmd)
+            ExecUtility.run_command(data.pod_name, data.namespace_name, data.sidecar_pod_name, echo_dockerfile_cmd)
             print(f"{data.sidecar_pod_name}: Dockerfile written.")
         except TimeoutError as te:
             raise TimeoutError(te) from te
@@ -191,15 +273,34 @@ class SaveUtility(KubernetesResourceManager):
         try:
             cls.check_kubernetes_client()
             image_name: str = f'{data.pod_name}-image:latest'
-            # build the image
+
+            # build the image with verbose output
             build_image_cmd: str = (
-                f"docker build -t {image_name} -f {SNAPSHOT_DIR}/rootfs/Dockerfile {SNAPSHOT_DIR}/rootfs"
+                f"docker image build -t {image_name} -f {SNAPSHOT_DIR}/rootfs/Dockerfile {SNAPSHOT_DIR}/rootfs"
             )
-            cls.run_command(data.sidecar_pod_name, data.namespace_name, data.sidecar_pod_name, build_image_cmd)
-            print(f"{data.sidecar_pod_name}: Image built.")
-            return {
-                'image_name': image_name
-            }
+
+            print(f"{data.sidecar_pod_name}: Starting image build...")
+            build_output = ExecUtility.run_command_with_stream(data.pod_name, data.namespace_name, data.sidecar_pod_name, build_image_cmd, timeout_minutes=15)
+            # Check for success indicators in the output
+            success_indicators = ["Successfully built", "Successfully tagged"]
+            if any(indicator in build_output for indicator in success_indicators):
+                print(f"{data.sidecar_pod_name}: Image built successfully.")
+                # Verify the image actually exists
+                verify_cmd = f"docker images {image_name} --format 'table {{{{.Repository}}}}:{{{{.Tag}}}}'"
+                verify_output = ExecUtility.run_command(data.pod_name, data.namespace_name, data.sidecar_pod_name, verify_cmd)
+                if image_name in verify_output:
+                    print(f"{data.sidecar_pod_name}: Image verified: {image_name}")
+                    return {
+                        'image_name': image_name,
+                        'build_output': build_output
+                    }
+                else:
+                    raise Exception(f"Image {image_name} was not found after build (verification failed)")
+            else:
+                # No success indicators found - build likely failed
+                print(f"{data.sidecar_pod_name}: Build output:\n{build_output}")
+                raise Exception(f"Docker build failed - no success indicators found. See output above for details.")
+
         except TimeoutError as te:
             raise TimeoutError(te) from te
         except ApiException as ae:
@@ -207,7 +308,7 @@ class SaveUtility(KubernetesResourceManager):
         except UnsupportedRuntimeEnvironment as ure:
             raise UnsupportedRuntimeEnvironment(f'Unsupported Run time Environment: {str(ure)}') from ure
         except Exception as e:
-            raise Exception(f'Unkown error occured: {str(e)}') from e
+            raise Exception(f'Docker build error: {str(e)}') from e
 
     @classmethod
     def tag_image(cls, data: SavePodDataClass, image_name: str, repo_name: str) -> None:
@@ -221,9 +322,9 @@ class SaveUtility(KubernetesResourceManager):
             cls.check_kubernetes_client()
             # tag the image
             tag_image_cmd: str = (
-                f"docker tag {image_name} {repo_name}/{image_name}"
+                f"docker image tag {image_name} {repo_name}/{image_name}"
             )
-            cls.run_command(data.sidecar_pod_name, data.namespace_name, data.sidecar_pod_name, tag_image_cmd)
+            ExecUtility.run_command(data.pod_name, data.namespace_name, data.sidecar_pod_name, tag_image_cmd)
             print(f"{data.sidecar_pod_name}: Image tagged.")
         except TimeoutError as te:
             raise TimeoutError(te) from te
@@ -235,14 +336,14 @@ class SaveUtility(KubernetesResourceManager):
             raise Exception(f'Unkown error occured: {str(e)}') from e
 
     @classmethod
-    def docker_login(cls, data: SavePodDataClass, repo_name: str, repo_password: str) -> None:
+    def docker_login(cls, data: SavePodDataClass, repo_name: str, repo_password: str) -> bool:
         '''
         Login to the docker registry.
         :params:
             data: SavePodDataClass
             repo_name: str
             repo_password: str
-        :returns: None
+        :returns: bool: True if login succeeded, False otherwise
         '''
         try:
             cls.check_kubernetes_client()
@@ -250,8 +351,12 @@ class SaveUtility(KubernetesResourceManager):
             login_cmd: str = (
                 f"docker login -u {repo_name} -p {repo_password}"
             )
-            cls.run_command(data.sidecar_pod_name, data.namespace_name, data.sidecar_pod_name, login_cmd)
-            print(f"{data.sidecar_pod_name}: Docker registry logged in.")
+            docker_login_output: str = ExecUtility.run_command_with_stream(data.pod_name, data.namespace_name, data.sidecar_pod_name, login_cmd)
+            if 'Login Succeeded' in docker_login_output:
+                print(f"{data.sidecar_pod_name}: Docker registry logged in.")
+                return True
+            print(f"{data.sidecar_pod_name}: Docker registry login failed. See output above for details.")
+            return False
         except TimeoutError as te:
             raise TimeoutError(te) from te
         except ApiException as ae:
@@ -262,23 +367,27 @@ class SaveUtility(KubernetesResourceManager):
             raise Exception(f'Unkown error occured: {str(e)}') from e
 
     @classmethod
-    def docker_push(cls, data: SavePodDataClass, image_name: str, repo_name: str) -> None:
+    def docker_push(cls, data: SavePodDataClass, image_name: str, repo_name: str) -> bool:
         '''
         Push the image to the docker registry.
         :params:
             data: SavePodDataClass
             image_name: str
             repo_name: str
-        :returns: None
+        :returns: bool: True if push succeeded, False otherwise
         '''
         try:
             cls.check_kubernetes_client()
             # push the image
             push_cmd: str = (
-                f"docker push {repo_name}/{image_name}"
+                f"docker image push {repo_name}/{image_name}"
             )
-            cls.run_command(data.sidecar_pod_name, data.namespace_name, data.sidecar_pod_name, push_cmd)
-            print(f"{data.sidecar_pod_name}: Image pushed to docker registry.")
+            push_output: str = ExecUtility.run_command_with_stream(data.pod_name, data.namespace_name, data.sidecar_pod_name, push_cmd)
+            if 'Pushed' in push_output:
+                print(f"{data.sidecar_pod_name}: Image pushed to docker registry.")
+                return True
+            print(f"{data.sidecar_pod_name}: Docker registry push failed. See output above for details.")
+            return False
         except TimeoutError as te:
             raise TimeoutError(te) from te
         except ApiException as ae:
