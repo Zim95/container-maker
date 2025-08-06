@@ -205,6 +205,23 @@ class TestServiceManager(TestCase):
         '''
         print('Test: test_websocket_into_service')
 
+    def test_save_service_pods(self) -> None:
+        '''
+        Test the save service pods method.
+        '''
+        print('Test: test_save_service_pods')
+        # create a service
+        ServiceManager.create(self.create_service_data)
+        # save the service pods
+        saved_pods: list[dict] = ServiceManager.save_service_pods(GetServiceDataClass(**{'namespace_name': self.namespace_name, 'service_name': self.service_name}))
+        # verify the pods
+        self.assertEqual(len(saved_pods), 1)
+        self.assertEqual(saved_pods[0]['image_name'], f'{self.pod_name}-image:latest')
+        self.assertEqual(saved_pods[0]['pod_name'], self.pod_name)
+        self.assertEqual(saved_pods[0]['namespace_name'], self.namespace_name)
+        # delete the service
+        ServiceManager.delete(DeleteServiceDataClass(**{'namespace_name': self.namespace_name, 'service_name': self.service_name}))
+
 
 class ZZZ_Cleanup(TestCase):
 

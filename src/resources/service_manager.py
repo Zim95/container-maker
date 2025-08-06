@@ -4,6 +4,7 @@ import time
 
 # modules
 from src.resources.dataclasses.pod.list_pod_dataclass import ListPodDataClass
+from src.resources.dataclasses.pod.save_pod_dataclass import SavePodDataClass
 from src.resources.dataclasses.service.delete_service_dataclass import DeleteServiceDataClass
 from src.resources.dataclasses.service.create_service_dataclass import CreateServiceDataClass, ServiceType
 from src.resources.dataclasses.service.get_service_dataclass import GetServiceDataClass
@@ -11,7 +12,7 @@ from src.resources.dataclasses.service.list_service_dataclass import ListService
 from src.resources import KubernetesResourceManager
 from src.common.exceptions import UnsupportedRuntimeEnvironment
 from src.resources.pod_manager import PodManager
-from src.resources.resource_config import SERVICE_IP_TIMEOUT_SECONDS, SERVICE_TERMINATION_TIMEOUT
+from src.resources.resource_config import SERVICE_IP_TIMEOUT_SECONDS, SERVICE_TERMINATION_TIMEOUT, SNAPSHOT_SIDECAR_NAME
 
 # third party
 from kubernetes.client.rest import ApiException
@@ -31,6 +32,8 @@ class ServiceManager(KubernetesResourceManager):
         '''
         Get associated pods for a service by matching the service's selector labels
         with pod labels.
+        :params: service: dict
+        :returns: list[dict]: List of pods
         '''
         pods: list = PodManager.list(ListPodDataClass(**{'namespace_name': service.get('metadata', {}).get('namespace', '')}))
         service_selector: dict = service.get('spec', {}).get('selector', {})
@@ -46,7 +49,11 @@ class ServiceManager(KubernetesResourceManager):
 
     @classmethod
     def get_service_ports(cls, service: V1Service) -> list[dict]:
-        """Get all ports from a service"""
+        """
+        Get all ports from a service.
+        :params: service: V1Service
+        :returns: list[dict]: List of ports
+        """
         ports: list[dict] = []
         for port in service._spec.ports:
             ports.append({
@@ -58,6 +65,11 @@ class ServiceManager(KubernetesResourceManager):
 
     @classmethod
     def list(cls, data: ListServiceDataClass) -> list[V1Service]:
+        '''
+        List all services in a namespace.
+        :params: data: ListServiceDataClass
+        :returns: list[dict]: List of services
+        '''
         try:
             cls.check_kubernetes_client()
             return [
@@ -81,6 +93,11 @@ class ServiceManager(KubernetesResourceManager):
 
     @classmethod
     def get(cls, data: GetServiceDataClass) -> V1Service:
+        '''
+        Get a service.
+        :params: data: GetServiceDataClass
+        :returns: dict: Service Details
+        '''
         try:
             cls.check_kubernetes_client()
             response: V1Service = cls.client.read_namespaced_service(name=data.service_name, namespace=data.namespace_name)
@@ -104,6 +121,13 @@ class ServiceManager(KubernetesResourceManager):
 
     @classmethod
     def get_service_ip(cls, namespace_name: str, service_name: str, timeout_seconds: float = SERVICE_IP_TIMEOUT_SECONDS) -> str:
+        '''
+        Get the service IP.
+        :params: namespace_name: str
+        :params: service_name: str
+        :params: timeout_seconds: float
+        :returns: str: Service IP
+        '''
         start_time = time.time()
         while (time.time() - start_time) < timeout_seconds:
             try:
@@ -118,6 +142,11 @@ class ServiceManager(KubernetesResourceManager):
 
     @classmethod
     def get_v1_service_ports(cls, data: CreateServiceDataClass) -> list:
+        '''
+        Get the v1 service ports.
+        :params: data: CreateServiceDataClass
+        :returns: list: List of v1 service ports
+        '''
         publish_port_counter: defaultdict = defaultdict(int)
         target_port_counter: defaultdict = defaultdict(int)
         ports: list = []
@@ -145,6 +174,11 @@ class ServiceManager(KubernetesResourceManager):
 
     @classmethod
     def create(cls, data: CreateServiceDataClass) -> dict:
+        '''
+        Create a service.
+        :params: data: CreateServiceDataClass
+        :returns: dict: Service Details
+        '''
         try:
             cls.check_kubernetes_client()
             # check for existing services
@@ -184,6 +218,12 @@ class ServiceManager(KubernetesResourceManager):
 
     @classmethod
     def poll_termination(cls, namespace_name: str, service_name: str, timeout_seconds: float = SERVICE_TERMINATION_TIMEOUT) -> None:
+        '''
+        Poll service termination.
+        :params: namespace_name: str
+        :params: service_name: str
+        :params: timeout_seconds: float
+        '''
         is_terminated: bool = False
         while is_terminated != True:
             service: dict = cls.get(GetServiceDataClass(**{'namespace_name': namespace_name, 'service_name': service_name}))
@@ -192,7 +232,49 @@ class ServiceManager(KubernetesResourceManager):
             time.sleep(timeout_seconds)
 
     @classmethod
+    def save_service_pods(cls, data: GetServiceDataClass) -> list:
+        '''
+        Save all pods associated with a service.
+        :params: data: SaveServiceDataClass
+        :returns: list[dict]: List of pods
+        '''
+        # get the service
+        service: V1Service = cls.client.read_namespaced_service(name=data.service_name, namespace=data.namespace_name)
+        # get the associated pods
+        pods: list[dict] = cls.get_associated_pods(service.to_dict())
+
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=4) as worker:
+            # Submit all save operations to run in parallel
+            futures: list = []
+            for pod in pods:
+                future = worker.submit(
+                    PodManager.save, 
+                    SavePodDataClass(
+                        namespace_name=data.namespace_name,
+                        pod_name=pod['pod_name'],
+                        sidecar_pod_name=SNAPSHOT_SIDECAR_NAME,
+                    )
+                )
+                futures.append(future)
+            
+            # Wait for all save operations to complete
+            results: list = []
+            for future in futures:
+                try:
+                    result = future.result()  # This will raise any exceptions that occurred
+                    results.append(result)
+                except Exception as e:
+                    print(f"Save failed for pod: {str(e)}")
+            return results
+
+    @classmethod
     def delete(cls, data: DeleteServiceDataClass) -> dict:
+        '''
+        Delete a service.
+        :params: data: DeleteServiceDataClass
+        :returns: dict: Status
+        '''
         try:
             cls.check_kubernetes_client()
             cls.client.delete_namespaced_service(data.service_name, data.namespace_name)
