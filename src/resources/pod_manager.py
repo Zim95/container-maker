@@ -300,7 +300,6 @@ class SaveUtility(KubernetesResourceManager):
                 # No success indicators found - build likely failed
                 print(f"{data.sidecar_pod_name}: Build output:\n{build_output}")
                 raise Exception(f"Docker build failed - no success indicators found. See output above for details.")
-
         except TimeoutError as te:
             raise TimeoutError(te) from te
         except ApiException as ae:
@@ -424,10 +423,16 @@ class SaveUtility(KubernetesResourceManager):
             # tag the image
             cls.tag_image(data, image_name['image_name'], repo_name)
             # login to the docker registry
-            cls.docker_login(data, repo_name, repo_password)
+            is_logged_in: bool = cls.docker_login(data, repo_name, repo_password)
+            if not is_logged_in:
+                raise Exception('Docker registry login failed')
             # push the image
-            cls.docker_push(data, image_name['image_name'], repo_name)
-            return image_name
+            is_pushed: bool = cls.docker_push(data, image_name['image_name'], repo_name)
+            if not is_pushed:
+                raise Exception('Docker registry push failed')
+            return {
+                'image_name': image_name['image_name']
+            }
         except TimeoutError as te:
             raise TimeoutError(te) from te
         except ApiException as ae:
@@ -435,7 +440,7 @@ class SaveUtility(KubernetesResourceManager):
         except UnsupportedRuntimeEnvironment as ure:
             raise UnsupportedRuntimeEnvironment(f'Unsupported Run time Environment: {str(ure)}') from ure
         except Exception as e:
-            raise Exception(f'Unkown error occured: {str(e)}') from e
+            raise Exception(f'Save pod error occured: {str(e)}') from e
 
 
 class PodManager(KubernetesResourceManager):
@@ -467,7 +472,9 @@ class PodManager(KubernetesResourceManager):
     @classmethod
     def get_pod_ports(cls, pod: V1Pod) -> list[dict]:
         """
-        Get all ports configured for a pod's containers
+        Get all ports configured for a pod's containers.
+        :params: pod: V1Pod
+        :returns: list[dict]: List of ports
         """
         ports: list[dict] = []
         for container in pod.spec.containers:
@@ -483,7 +490,9 @@ class PodManager(KubernetesResourceManager):
     @classmethod
     def get_pod_containers(cls, pod: V1Pod) -> list[dict]:
         """
-        Get all containers for a pod
+        Get all containers for a pod.
+        :params: pod: V1Pod
+        :returns: list[dict]: List of containers
         """
         if not pod.spec.containers:
             return []
@@ -498,6 +507,11 @@ class PodManager(KubernetesResourceManager):
 
     @classmethod
     def get_pod_response(cls, pod: V1Pod) -> dict:
+        '''
+        Get the pod response.
+        :params: pod: V1Pod
+        :returns: dict: Pod Details
+        '''
         return {
             'pod_id': pod.metadata.uid,
             'pod_name': pod.metadata.name,
@@ -510,6 +524,11 @@ class PodManager(KubernetesResourceManager):
 
     @classmethod
     def list(cls, data: ListPodDataClass) -> list[dict]:
+        '''
+        List all pods in a namespace.
+        :params: data: ListPodDataClass
+        :returns: list[dict]: List of pods
+        '''
         try:
             cls.check_kubernetes_client()
             return [
@@ -547,6 +566,10 @@ class PodManager(KubernetesResourceManager):
     def get_pod_ip(cls, namespace_name: str, pod_name: str, timeout_seconds: float = POD_IP_TIMEOUT_SECONDS) -> str:
         '''
         Get the IP of the Pod.
+        :params: namespace_name: str
+        :params: pod_name: str
+        :params: timeout_seconds: float
+        :returns: str: Pod IP
         '''
         start_time = time.time()
         while (time.time() - start_time) < timeout_seconds:
@@ -597,7 +620,7 @@ class PodManager(KubernetesResourceManager):
         '''
         Save the pod.
         :params: data: SavePodDataClass
-        :returns: dict: Pod Details
+        :returns: dict: Image details
         '''
         try:
             cls.check_kubernetes_client()
@@ -618,7 +641,7 @@ class PodManager(KubernetesResourceManager):
             if data.pod_name not in container_names:
                 raise ApiException(f'Pod {data.pod_name} needs a main container')
             # save the pod
-            return SaveUtility.save_image(data)
+            return {**SaveUtility.save_image(data), 'pod_name': data.pod_name, 'namespace_name': data.namespace_name}
         except TimeoutError as te:
             raise TimeoutError(te) from te
         except ApiException as ae:
@@ -630,6 +653,11 @@ class PodManager(KubernetesResourceManager):
 
     @classmethod
     def create(cls, data: CreatePodDataClass) -> dict:
+        '''
+        Create a pod.
+        :params: data: CreatePodDataClass
+        :returns: dict: Pod Details
+        '''
         try:
             cls.check_kubernetes_client()
             p: dict = cls.get(GetPodDataClass(namespace_name=data.namespace_name, pod_name=data.pod_name))
@@ -713,6 +741,12 @@ class PodManager(KubernetesResourceManager):
 
     @classmethod
     def poll_termination(cls, namespace_name: str, pod_name: str, timeout_seconds: float = POD_TERMINATION_TIMEOUT) -> None:
+        '''
+        Poll pod termination.
+        :params: namespace_name: str
+        :params: pod_name: str
+        :params: timeout_seconds: float
+        '''
         is_terminated: bool = False
         while is_terminated != True:
             pod: dict = cls.get(GetPodDataClass(**{'namespace_name': namespace_name, 'pod_name': pod_name}))
@@ -722,6 +756,11 @@ class PodManager(KubernetesResourceManager):
 
     @classmethod
     def delete(cls, data: DeletePodDataClass) -> dict:
+        '''
+        Delete a pod.
+        :params: data: DeletePodDataClass
+        :returns: dict: Status
+        '''
         try:
             cls.check_kubernetes_client()
             cls.client.delete_namespaced_pod(data.pod_name, data.namespace_name)

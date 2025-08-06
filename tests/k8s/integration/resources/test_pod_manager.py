@@ -34,13 +34,14 @@ import paramiko
 # modules
 from src.resources.dataclasses.namespace.delete_namespace_dataclass import DeleteNamespaceDataClass
 from src.resources.dataclasses.pod.delete_pod_dataclass import DeletePodDataClass
+from src.resources.dataclasses.pod.save_pod_dataclass import SavePodDataClass
 from src.resources.namespace_manager import NamespaceManager
 from src.resources.dataclasses.namespace.create_namespace_dataclass import CreateNamespaceDataClass
 from src.resources.pod_manager import PodManager
 from src.resources.dataclasses.pod.list_pod_dataclass import ListPodDataClass
 from src.resources.dataclasses.pod.create_pod_dataclass import CreatePodDataClass
 from src.common.config import REPO_NAME
-from src.resources.resource_config import SNAPSHOT_SIDECAR_NAME, SNAPSHOT_SIDECAR_IMAGE_NAME
+from src.resources.resource_config import SNAPSHOT_SIDECAR_NAME, SNAPSHOT_SIDECAR_IMAGE_NAME, POD_UPTIME_TIMEOUT
 
 NAMESPACE_NAME: str = 'test-pod-manager'
 
@@ -191,7 +192,7 @@ class TestPodManager(TestCase):
             self.create_pod_data.image_name = 'test-image'
             PodManager.create(self.create_pod_data)
         except TimeoutError as e:
-            self.assertEqual(str(e), f"Timeout waiting for pod {self.pod_name} to reach status Running after {20.0} seconds")
+            self.assertEqual(str(e), f"Timeout waiting for pod {self.pod_name} to reach status Running after {POD_UPTIME_TIMEOUT} seconds")
             self.create_pod_data.image_name = f'{REPO_NAME}/ssh_ubuntu:latest'  # set it back to the normal image for the rest of the tests.
         # delete the existing pod. Otherwise the new pod will not be created. it will simply fetch the existing pod.
         # the existing pod will have the same image error and the rest of the tests will not work.
@@ -206,8 +207,20 @@ class TestPodManager(TestCase):
         '''
         print('Test: test_save_pod')
         # create a pod
-        pod: dict = PodManager.create(self.create_pod_data)
-
+        PodManager.create(self.create_pod_data)
+        save_pod_data: SavePodDataClass = SavePodDataClass(
+            namespace_name=self.namespace_name,
+            pod_name=self.pod_name,
+            sidecar_pod_name=SNAPSHOT_SIDECAR_NAME,
+        )
+        image_data: dict = PodManager.save(save_pod_data)
+        self.assertEqual(image_data['image_name'], f'{self.pod_name}-image:latest')
+        print('Save pod successful.')
+        # delete the pod
+        PodManager.delete(DeletePodDataClass(**{
+            'namespace_name': self.namespace_name,
+            'pod_name': self.pod_name
+        }))
 
 
 class ZZZ_Cleanup(TestCase):
