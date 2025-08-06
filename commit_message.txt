@@ -1,4 +1,5 @@
-- resource_config.py - Added REPO_NAME as an env.
-- pod_manager.py - Added run_command method to SaveUtility. Added sidecar to pod, Added save pod template, Added get_container_ports, get_pod_containers, get_pod_response.
-- test_pod_manager.py - Added tests for sidecar pod. Added template for testing save.
-- test_save_utility.py - Added template for testing SaveUtility.
+- development.yaml - Added INGRESS_HOST env variable.
+- k8s-development-setup.sh - Added INGRESS_HOST env variable.
+- ingres_manager.py - Added save_ingress_services method.
+- test_ingress_manager.py - Added test for save_ingress_services method.
+- Makefile - Added INGRESS_HOST env variable.

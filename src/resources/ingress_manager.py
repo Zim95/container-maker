@@ -130,6 +130,34 @@ class IngressManager(KubernetesResourceManager):
             raise Exception(f'Unkown error occured: {str(e)}') from e
 
     @classmethod
+    def save_ingress_services(cls, data: GetIngressDataClass) -> list:
+        '''
+        Save all services associated with an ingress.
+        :params: data: GetIngressDataClass
+        :returns: list: List of services
+        '''
+        cls.check_kubernetes_client()
+        ingress: V1Ingress = cls.client.read_namespaced_ingress(name=data.ingress_name, namespace=data.namespace_name)
+        services: list[dict] = cls.get_associated_services(ingress.to_dict())
+
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=4) as worker:
+            futures: list = []
+            for service in services:
+                future = worker.submit(
+                    ServiceManager.save_service_pods,
+                    GetServiceDataClass(namespace_name=data.namespace_name, service_name=service['service_name']))
+                futures.append(future)
+            results: list = []
+            for future in futures:
+                try:
+                    result = future.result()
+                    results.extend(result)
+                except Exception as e:
+                    print(f"Error saving service: {str(e)}")
+            return results
+
+    @classmethod
     def get_ingress_ip(cls, namespace_name: str, ingress_name: str, timeout_seconds: float = INGRESS_IP_TIMEOUT_SECONDS) -> str:
         start_time = time.time()
         while (time.time() - start_time) < timeout_seconds:

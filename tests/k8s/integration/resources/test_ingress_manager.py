@@ -5,6 +5,7 @@ import time
 # modules
 from src.resources.dataclasses.ingress.create_ingress_dataclass import CreateIngressDataClass
 from src.resources.dataclasses.ingress.delete_ingress_dataclass import DeleteIngressDataClass
+from src.resources.dataclasses.ingress.get_ingress_dataclass import GetIngressDataClass
 from src.resources.dataclasses.ingress.list_ingress_dataclass import ListIngressDataClass
 from src.resources.dataclasses.namespace.create_namespace_dataclass import CreateNamespaceDataClass
 from src.resources.dataclasses.namespace.delete_namespace_dataclass import DeleteNamespaceDataClass
@@ -123,6 +124,21 @@ class TestIngressManager(TestCase):
 
         # verify that only one ingress exists
         self.assertEqual(len(IngressManager.list(ListIngressDataClass(namespace_name=self.namespace_name))), 1)
+
+    def test_c_save_ingress_services(self) -> None:
+        '''
+        Test the save ingress services method.
+        '''
+        print('Test: test_save_ingress_services')
+        # create ingress and wait for IP
+        IngressManager.create(self.ingress_data)
+        # save the ingress services
+        saved_services: list = IngressManager.save_ingress_services(GetIngressDataClass(namespace_name=self.namespace_name, ingress_name=self.ingress_name))
+        # verify the services
+        self.assertEqual(len(saved_services), 1)
+        self.assertEqual(saved_services[0]['image_name'], f'{self.pod_name}-image:latest')
+        self.assertEqual(saved_services[0]['pod_name'], self.pod_name)
+        self.assertEqual(saved_services[0]['namespace_name'], self.namespace_name)
 
     def tearDown(self) -> None:
         print('Teardown: cleaning up after test')

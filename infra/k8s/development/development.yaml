@@ -83,6 +83,8 @@ spec:
           value: ${REPO_NAME}
         - name: REPO_PASSWORD
           value: ${REPO_PASSWORD}
+        - name: INGRESS_HOST
+          value: ${INGRESS_HOST}
         volumeMounts:
         - name: app-code
           mountPath: /app
