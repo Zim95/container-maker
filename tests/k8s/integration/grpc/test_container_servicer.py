@@ -22,6 +22,7 @@ from container_maker_spec.types_pb2 import ExposureLevel as GRPCExposureLevel
 from src.containers.dataclasses.create_container_dataclass import CreateContainerDataClass
 from src.resources.dataclasses.namespace.delete_namespace_dataclass import DeleteNamespaceDataClass
 from src.resources.namespace_manager import NamespaceManager
+from src.resources.resource_config import POD_UPTIME_TIMEOUT
 
 
 NAMESPACE_NAME: str = 'test-grpc-namespace'
@@ -170,7 +171,7 @@ class TestGRPCContainerServicer(TestCase):
             container_response: ContainerResponse = self.container_maker_servicer.createContainer(self.grpc_create_container_request, None)
             container_id = container_response.container_id
         except TimeoutError as e:
-            self.assertEqual(str(e), f"Timeout waiting for pod {f'{self.container_name}-pod'} to reach status Running after {20.0} seconds")
+            self.assertEqual(str(e), f"Timeout waiting for pod {f'{self.container_name}-pod'} to reach status Running after {POD_UPTIME_TIMEOUT} seconds")
             self.grpc_create_container_request.image_name = 'zim95/ssh_ubuntu:latest'  # set it back to the normal image for the rest of the tests.
         # delete the existing pod. Otherwise the new pod will not be created. it will simply fetch the existing pod.
         # the existing pod will have the same image error and the rest of the tests will not work.
