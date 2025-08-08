@@ -19,3 +19,6 @@ SNAPSHOT_DIR: str = '/mnt/snapshot'
 SNAPSHOT_FILE_NAME: str = 'full_fs_snapshot'
 SNAPSHOT_SIDECAR_NAME: str = 'snapshot-sidecar'
 SNAPSHOT_SIDECAR_IMAGE_NAME: str = f'{REPO_NAME}/snapshot_sidecar:latest'
+
+# Timeout for building the image
+IMAGE_BUILD_TIMEOUT_MINUTES: int = 25

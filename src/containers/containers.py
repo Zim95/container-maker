@@ -19,6 +19,7 @@ from src.containers.dataclasses.create_container_dataclass import CreateContaine
 from src.containers.dataclasses.delete_container_dataclass import DeleteContainerDataClass
 
 # resources
+from src.containers.dataclasses.save_container_dataclass import SaveContainerDataClass
 from src.resources.dataclasses.ingress.create_ingress_dataclass import CreateIngressDataClass
 from src.resources.dataclasses.ingress.delete_ingress_dataclass import DeleteIngressDataClass
 from src.resources.dataclasses.ingress.get_ingress_dataclass import GetIngressDataClass
@@ -29,12 +30,14 @@ from src.resources.dataclasses.namespace.get_namespace_dataclass import GetNames
 from src.resources.dataclasses.pod.create_pod_dataclass import CreatePodDataClass
 from src.resources.dataclasses.pod.delete_pod_dataclass import DeletePodDataClass
 from src.resources.dataclasses.pod.list_pod_dataclass import ListPodDataClass
+from src.resources.dataclasses.pod.save_pod_dataclass import SavePodDataClass
 from src.resources.dataclasses.service.create_service_dataclass import CreateServiceDataClass, PublishInformationDataClass, ServiceType
 from src.resources.dataclasses.service.delete_service_dataclass import DeleteServiceDataClass
 from src.resources.dataclasses.service.get_service_dataclass import GetServiceDataClass
 from src.resources.dataclasses.service.list_service_dataclass import ListServiceDataClass
 from src.resources.namespace_manager import NamespaceManager
 from src.resources.pod_manager import PodManager
+from src.resources.resource_config import SNAPSHOT_SIDECAR_NAME
 from src.resources.service_manager import ServiceManager
 from src.resources.ingress_manager import IngressManager
 from src.containers import ContainerManager
@@ -245,6 +248,41 @@ class KubernetesContainerManager(ContainerManager):
             'container_network': final_container[network_key],
             'container_ports': final_container[ports_key],
         }
+
+    @classmethod
+    def save(cls, data: SaveContainerDataClass) -> list:
+        '''
+        Save a container.
+        '''
+        namespace: dict = NamespaceManager.get(GetNamespaceDataClass(namespace_name=data.network_name))
+        if not namespace:
+            return []
+        pod: dict | None = KubernetesContainerHelper.check_pod(namespace_name=data.network_name, container_id=data.container_id)
+        service: dict | None = KubernetesContainerHelper.check_service(namespace_name=data.network_name, container_id=data.container_id)
+        ingress: dict | None = KubernetesContainerHelper.check_ingress(namespace_name=data.network_name, container_id=data.container_id)
+        final_container: dict = pod or service or ingress or {}
+
+        if not final_container:
+            raise Exception(f'Cannot find, container_id={data.container_id} in namespace={data.network_name}')
+
+        if pod:
+            # if its a pod, we will only get a dictionary back.
+            # To make the output consistent, we will put it in a list.
+            return [PodManager.save(SavePodDataClass(
+                namespace_name=data.network_name,
+                pod_name=pod['pod_name'],
+                sidecar_pod_name=SNAPSHOT_SIDECAR_NAME,
+            ))]
+        if service:
+            return ServiceManager.save_service_pods(GetServiceDataClass(
+                namespace_name=data.network_name,
+                service_name=service['service_name'],
+            ))
+        if ingress:
+            return IngressManager.save_ingress_services(GetIngressDataClass(
+                namespace_name=data.network_name,
+                ingress_name=ingress['ingress_name'],
+            ))
 
     @classmethod
     def validate_publish_information(cls, publish_information: list) -> None:
