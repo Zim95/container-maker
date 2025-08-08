@@ -181,7 +181,6 @@ class TestGRPCContainerServicer(TestCase):
                 network_name=self.namespace_name,
             ), None)
 
-
     def test_e_creation_of_container_with_invalid_exposure_level(self) -> None:
         '''
         Should raise a invalid exposure level error and then delete the container.
