@@ -14,7 +14,7 @@ import paramiko
 # grpc
 from src.grpc.servicer import ContainerMakerAPIServicerImpl
 from container_maker_spec.types_pb2 import CreateContainerRequest, ListContainerRequest, DeleteContainerRequest
-from container_maker_spec.types_pb2 import ContainerResponse, ListContainerResponse, DeleteContainerResponse
+from container_maker_spec.types_pb2 import ContainerResponse, ListContainerResponse, DeleteContainerResponse, SaveContainerRequest, SaveContainerResponse
 from container_maker_spec.types_pb2 import ExposureLevel as GRPCExposureLevel
 
 
@@ -237,13 +237,38 @@ class TestGRPCContainerServicer(TestCase):
         containers: ListContainerResponse = self.container_maker_servicer.listContainer(ListContainerRequest(network_name=self.namespace_name), None)
         self.assertEqual(len(containers.containers), 0)
 
-    def test_h_creation_of_container_with_volume(self) -> None:
+    def test_h_save_container(self) -> None:
         '''
-        Should create a container with a volume and then delete it.
-        Recreate the container with the same volume. It should have all the files
-        and installed applications in it.
+        Should save a container and then delete it.
         '''
-        pass
+        print('Test: test_h_save_container')
+        # list the containers, there shouldn't be any
+        init_containers: ListContainerResponse = self.container_maker_servicer.listContainer(ListContainerRequest(network_name=self.namespace_name), None)
+        self.assertEqual(len(init_containers.containers), 0)
+        # create the container
+        container_response: ContainerResponse = self.container_maker_servicer.createContainer(self.grpc_create_container_request, None)
+        # save the container
+        save_container_response: SaveContainerResponse = self.container_maker_servicer.saveContainer(SaveContainerRequest(
+            container_id=container_response.container_id,
+            network_name=self.namespace_name,
+        ), None)
+        # list the containers, there should be one
+        containers: ListContainerResponse = self.container_maker_servicer.listContainer(ListContainerRequest(network_name=self.namespace_name), None)
+        self.assertEqual(len(containers.containers), 1)
+        # assert the values of the saved container
+        self.assertEqual(save_container_response.saved_pods[0].pod_name, f'{self.container_name}-pod')
+        self.assertEqual(save_container_response.saved_pods[0].namespace_name, self.namespace_name)
+        self.assertEqual(save_container_response.saved_pods[0].image_name, f'{self.container_name}-pod-image:latest')
+        # delete the container
+        delete_container_response: DeleteContainerResponse = self.container_maker_servicer.deleteContainer(DeleteContainerRequest(
+            container_id=container_response.container_id,
+            network_name=self.namespace_name,
+        ), None)
+        self.assertEqual(delete_container_response.container_id, container_response.container_id)
+        self.assertEqual(delete_container_response.status, 'Deleted')
+        # list the containers, there should be no containers
+        containers: ListContainerResponse = self.container_maker_servicer.listContainer(ListContainerRequest(network_name=self.namespace_name), None)
+        self.assertEqual(len(containers.containers), 0)
 
     def tearDown(self) -> None:
         '''

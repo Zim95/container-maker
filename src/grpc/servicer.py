@@ -9,6 +9,8 @@ from container_maker_spec.types_pb2 import DeleteContainerRequest
 from container_maker_spec.types_pb2 import ContainerResponse
 from container_maker_spec.types_pb2 import ListContainerResponse
 from container_maker_spec.types_pb2 import DeleteContainerResponse
+from container_maker_spec.types_pb2 import SaveContainerRequest
+from container_maker_spec.types_pb2 import SaveContainerResponse
 
 # modules
 from src.common.exceptions import UnsupportedRuntimeEnvironment
@@ -26,12 +28,15 @@ from src.grpc.data_transformer.get_container_transformer import GetContainerInpu
 from src.grpc.data_transformer.get_container_transformer import GetContainerOutputDataTransformer
 from src.grpc.data_transformer.delete_container_transformer import DeleteContainerInputDataTransformer
 from src.grpc.data_transformer.delete_container_transformer import DeleteContainerOutputDataTransformer
+from src.grpc.data_transformer.save_container_transformer import SaveContainerInputDataTransformer
+from src.grpc.data_transformer.save_container_transformer import SaveContainerOutputDataTransformer
 
 # dataclasses
 from src.containers.dataclasses.create_container_dataclass import CreateContainerDataClass
 from src.containers.dataclasses.list_container_dataclass import ListContainerDataClass
 from src.containers.dataclasses.get_container_dataclass import GetContainerDataClass
 from src.containers.dataclasses.delete_container_dataclass import DeleteContainerDataClass
+from src.containers.dataclasses.save_container_dataclass import SaveContainerDataClass
 
 # containers
 from src.containers.containers import KubernetesContainerManager
@@ -103,3 +108,14 @@ class ContainerMakerAPIServicerImpl(ContainerMakerAPIServicer):
             raise UnsupportedRuntimeEnvironment(f'Unsupported Runtime Environment: {str(ure)}') from ure
         except Exception as e:
             raise Exception(f'Error occurred: {str(e)}') from e
+
+    def saveContainer(self, request: SaveContainerRequest, context: ServicerContext) -> SaveContainerResponse:
+        try:
+            input_data: SaveContainerDataClass = SaveContainerInputDataTransformer.transform(request)
+            container: dict = KubernetesContainerManager.save(input_data)
+            output_data: SaveContainerResponse = SaveContainerOutputDataTransformer.transform(container)
+            return output_data
+        except TimeoutError as te:
+            raise TimeoutError(te) from te
+        except ApiException as ae:
+            raise ApiException(f'Error occurred while saving container: {str(ae)}') from ae
