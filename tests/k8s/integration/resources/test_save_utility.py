@@ -136,6 +136,11 @@ class TestSaveUtility(TestCase):
         self.assertEqual(is_pushed, True)
         print('Image pushed to docker registry.')
 
+        # test delete local image
+        is_deleted: bool = SaveUtility.delete_local_image(self.save_pod_data, image_data['image_name'], REPO_NAME)
+        self.assertEqual(is_deleted, True)
+        print('Local image deleted.')
+
         # create new pod from the new image.
         new_pod_data: CreatePodDataClass = CreatePodDataClass(
             image_name=f'{REPO_NAME}/{image_data["image_name"].split(":")[0]}',

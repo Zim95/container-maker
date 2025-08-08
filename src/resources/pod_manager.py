@@ -9,7 +9,7 @@ from src.resources.dataclasses.pod.create_pod_dataclass import CreatePodDataClas
 from src.resources.dataclasses.pod.list_pod_dataclass import ListPodDataClass
 from src.resources.dataclasses.pod.save_pod_dataclass import SavePodDataClass
 from src.common.exceptions import UnsupportedRuntimeEnvironment
-from src.resources.resource_config import POD_IP_TIMEOUT_SECONDS, POD_UPTIME_TIMEOUT, POD_TERMINATION_TIMEOUT
+from src.resources.resource_config import POD_IP_TIMEOUT_SECONDS, POD_UPTIME_TIMEOUT, POD_TERMINATION_TIMEOUT, IMAGE_BUILD_TIMEOUT_MINUTES
 from src.resources.resource_config import SNAPSHOT_DIR, SNAPSHOT_FILE_NAME, SNAPSHOT_SIDECAR_NAME, SNAPSHOT_SIDECAR_IMAGE_NAME
 from src.common.config import REPO_NAME, REPO_PASSWORD
 
@@ -280,7 +280,7 @@ class SaveUtility(KubernetesResourceManager):
             )
 
             print(f"{data.sidecar_pod_name}: Starting image build...")
-            build_output = ExecUtility.run_command_with_stream(data.pod_name, data.namespace_name, data.sidecar_pod_name, build_image_cmd, timeout_minutes=15)
+            build_output = ExecUtility.run_command_with_stream(data.pod_name, data.namespace_name, data.sidecar_pod_name, build_image_cmd, timeout_minutes=IMAGE_BUILD_TIMEOUT_MINUTES)
             # Check for success indicators in the output
             success_indicators = ["Successfully built", "Successfully tagged"]
             if any(indicator in build_output for indicator in success_indicators):
@@ -397,6 +397,54 @@ class SaveUtility(KubernetesResourceManager):
             raise Exception(f'Unkown error occured: {str(e)}') from e
 
     @classmethod
+    def delete_local_image(cls, data: SavePodDataClass, image_name: str, repo_name: str) -> bool:
+        '''
+        Delete the image from local Docker daemon to free up space.
+        :params:
+            data: SavePodDataClass
+            image_name: str - Local image name (e.g., "test-pod-image:latest")
+            repo_name: str - Repository name (e.g., "zim95")
+        :returns: bool: True if deletion succeeded, False otherwise
+        '''
+        try:
+            cls.check_kubernetes_client()
+            
+            # Create both image references to delete
+            local_image = image_name
+            tagged_image = f"{repo_name}/{image_name}"
+            
+            # Delete both local and tagged versions
+            delete_cmd: str = f"docker rmi {local_image} {tagged_image}"
+            
+            ExecUtility.run_command(data.pod_name, data.namespace_name, data.sidecar_pod_name, delete_cmd)
+            print(f"{data.sidecar_pod_name}: Local images deleted: {local_image}, {tagged_image}")
+            
+            # Verify deletion by checking if images still exist
+            verify_cmd = f"docker images --format '{{{{.Repository}}}}:{{{{.Tag}}}}' | grep -E '^({local_image}|{tagged_image})$'"
+            try:
+                verify_output = ExecUtility.run_command(data.pod_name, data.namespace_name, data.sidecar_pod_name, verify_cmd)
+                if verify_output.strip():
+                    print(f"{data.sidecar_pod_name}: Warning - Some images may not have been deleted: {verify_output}")
+                    return False
+                else:
+                    print(f"{data.sidecar_pod_name}: Image deletion verified.")
+                    return True
+            except Exception:
+                # If grep finds nothing, it returns non-zero exit code, which means deletion was successful
+                print(f"{data.sidecar_pod_name}: Image deletion verified.")
+                return True
+                
+        except TimeoutError as te:
+            raise TimeoutError(te) from te
+        except ApiException as ae:
+            raise ApiException(f'Error occured while deleting local image: {str(ae)}') from ae
+        except UnsupportedRuntimeEnvironment as ure:
+            raise UnsupportedRuntimeEnvironment(f'Unsupported Run time Environment: {str(ure)}') from ure
+        except Exception as e:
+            print(f'Warning: Failed to delete local images {image_name}: {str(e)}')
+            return False
+
+    @classmethod
     def save_image(cls, data: SavePodDataClass) -> dict:
         '''
         Save the pod.
@@ -430,6 +478,10 @@ class SaveUtility(KubernetesResourceManager):
             is_pushed: bool = cls.docker_push(data, image_name['image_name'], repo_name)
             if not is_pushed:
                 raise Exception('Docker registry push failed')
+            # delete local images to free up space
+            is_deleted: bool = cls.delete_local_image(data, image_name['image_name'], repo_name)
+            if not is_deleted:
+                raise Exception('Local images deletion failed')
             return {
                 'image_name': image_name['image_name']
             }
