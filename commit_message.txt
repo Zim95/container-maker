@@ -1,4 +1,2 @@
-containers.py - Added save method.
-test_save_container.py - Added test for containers save method.
-resource_config.py - Added IMAGE_BUILD_TIMEOUT_MINUTES.
-save_container_dataclass.py - Added SaveContainerDataClass.
+pod_manager.py - Updated SaveUtility, Added delete local image.
+test_save_utility.py - Updated test for SaveUtility, Added check for deleting local image.
