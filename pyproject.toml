@@ -14,7 +14,7 @@ paramiko = "^3.5.1"
 grpcio = "^1.70.0"
 click = "^8.1.8"
 jupyter = "^1.1.1"
-container-maker-spec = {path = "./container-maker-spec"}
+container-maker-spec = {git = "https://github.com/Zim95/container-maker-spec.git", rev = "main"}
 
 
 [build-system]

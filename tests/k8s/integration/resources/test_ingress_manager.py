@@ -9,7 +9,7 @@ from src.resources.dataclasses.ingress.get_ingress_dataclass import GetIngressDa
 from src.resources.dataclasses.ingress.list_ingress_dataclass import ListIngressDataClass
 from src.resources.dataclasses.namespace.create_namespace_dataclass import CreateNamespaceDataClass
 from src.resources.dataclasses.namespace.delete_namespace_dataclass import DeleteNamespaceDataClass
-from src.resources.dataclasses.pod.create_pod_dataclass import CreatePodDataClass
+from src.resources.dataclasses.pod.create_pod_dataclass import CreatePodDataClass, ResourceRequirementsDataClass
 from src.resources.dataclasses.pod.delete_pod_dataclass import DeletePodDataClass
 from src.resources.dataclasses.service.create_service_dataclass import CreateServiceDataClass, PublishInformationDataClass
 from src.resources.dataclasses.service.delete_service_dataclass import DeleteServiceDataClass
@@ -38,14 +38,31 @@ class TestIngressManager(TestCase):
         self.namespace_name: str = NAMESPACE_NAME
         self.target_ports: set = {22, 23}
         self.environment_variables: dict = {
-            "SSH_PASSWORD": "testpwd"
+            "SSH_USERNAME": "ubuntu",
+            "SSH_PASSWORD": "testpwd",
+            "CONTAINER_ID": "1234567890",
+            "DB_USERNAME": "testuser",
+            "DB_PASSWORD": "testpassword",
+            "DB_NAME": "testdb",
+            "DB_HOST": "testhost",
+            "DB_PORT": "5432",
+            "DB_DATABASE": "testdatabase",
         }
+        self.resource_requirements: ResourceRequirementsDataClass = ResourceRequirementsDataClass(
+            cpu_request='100m',
+            cpu_limit='1',
+            memory_request='256Mi',
+            memory_limit='1Gi',
+            ephemeral_request='512Mi',
+            ephemeral_limit='1Gi',
+        )
         self.create_pod_data: CreatePodDataClass = CreatePodDataClass(
             image_name=self.image_name,
             pod_name=self.pod_name,
             namespace_name=self.namespace_name,
             target_ports=self.target_ports,
             environment_variables=self.environment_variables,
+            resource_requirements=self.resource_requirements,
         )
         self.service_name: str = 'test-ssh-service'
         self.service_port: int = 2222

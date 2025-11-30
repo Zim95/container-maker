@@ -6,7 +6,7 @@ INGRESS_IP_TIMEOUT_SECONDS: float = 60.0
 INGRESS_TERMINATION_TIMEOUT: float = 20.0
 
 # Timeout for pod uptime
-POD_UPTIME_TIMEOUT: float = 40.0
+POD_UPTIME_TIMEOUT: float = 80.0
 POD_IP_TIMEOUT_SECONDS: float = 20.0
 POD_TERMINATION_TIMEOUT: float = 20.0
 
@@ -20,5 +20,10 @@ SNAPSHOT_FILE_NAME: str = 'full_fs_snapshot'
 SNAPSHOT_SIDECAR_NAME: str = 'snapshot-sidecar'
 SNAPSHOT_SIDECAR_IMAGE_NAME: str = f'{REPO_NAME}/snapshot_sidecar:latest'
 
+# Pod status
+STATUS_SIDECAR_NAME: str = 'status-sidecar'
+STATUS_SIDECAR_IMAGE_NAME: str = f'{REPO_NAME}/status_sidecar:latest'
+
 # Timeout for building the image
 IMAGE_BUILD_TIMEOUT_MINUTES: int = 25
+IMAGE_PUSH_TIMEOUT_MINUTES: int = 25

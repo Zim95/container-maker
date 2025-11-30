@@ -5,11 +5,11 @@ import warnings  # this is to capture resource warnings.
 from src.resources.dataclasses.pod.delete_pod_dataclass import DeletePodDataClass
 from src.resources.dataclasses.pod.get_pod_dataclass import GetPodDataClass
 from src.resources import KubernetesResourceManager
-from src.resources.dataclasses.pod.create_pod_dataclass import CreatePodDataClass
+from src.resources.dataclasses.pod.create_pod_dataclass import CreatePodDataClass, ResourceRequirementsDataClass
 from src.resources.dataclasses.pod.list_pod_dataclass import ListPodDataClass
 from src.resources.dataclasses.pod.save_pod_dataclass import SavePodDataClass
 from src.common.exceptions import UnsupportedRuntimeEnvironment
-from src.resources.resource_config import POD_IP_TIMEOUT_SECONDS, POD_UPTIME_TIMEOUT, POD_TERMINATION_TIMEOUT, IMAGE_BUILD_TIMEOUT_MINUTES
+from src.resources.resource_config import IMAGE_PUSH_TIMEOUT_MINUTES, POD_IP_TIMEOUT_SECONDS, POD_UPTIME_TIMEOUT, POD_TERMINATION_TIMEOUT, IMAGE_BUILD_TIMEOUT_MINUTES, STATUS_SIDECAR_IMAGE_NAME, STATUS_SIDECAR_NAME
 from src.resources.resource_config import SNAPSHOT_DIR, SNAPSHOT_FILE_NAME, SNAPSHOT_SIDECAR_NAME, SNAPSHOT_SIDECAR_IMAGE_NAME
 from src.common.config import REPO_NAME, REPO_PASSWORD
 
@@ -25,6 +25,7 @@ from kubernetes.client import V1SecurityContext
 from kubernetes.client import V1Volume
 from kubernetes.client import V1EmptyDirVolumeSource
 from kubernetes.client import V1VolumeMount
+from kubernetes.client import V1ResourceRequirements
 from kubernetes.stream import ws_client
 from kubernetes.stream import stream
 
@@ -381,7 +382,7 @@ class SaveUtility(KubernetesResourceManager):
             push_cmd: str = (
                 f"docker image push {repo_name}/{image_name}"
             )
-            push_output: str = ExecUtility.run_command_with_stream(data.pod_name, data.namespace_name, data.sidecar_pod_name, push_cmd)
+            push_output: str = ExecUtility.run_command_with_stream(data.pod_name, data.namespace_name, data.sidecar_pod_name, push_cmd, timeout_minutes=IMAGE_PUSH_TIMEOUT_MINUTES)
             if 'Pushed' in push_output:
                 print(f"{data.sidecar_pod_name}: Image pushed to docker registry.")
                 return True
@@ -548,14 +549,31 @@ class PodManager(KubernetesResourceManager):
         """
         if not pod.spec.containers:
             return []
-        return [
-            {
-                'container_name': container.name,
-                'container_image': container.image,
-                'container_ports': cls.get_container_ports(container)
+
+        containers: list[dict] = []
+        for container in pod.spec.containers:
+            # Derive per-container resource info from the Kubernetes spec
+            resources: V1ResourceRequirements = container.resources or V1ResourceRequirements()
+            requests: dict | None = getattr(resources, "requests", None)
+            limits: dict | None = getattr(resources, "limits", None)
+            container_resources: dict = {
+                'cpu_request': (requests or {}).get('cpu'),
+                'cpu_limit': (limits or {}).get('cpu'),
+                'memory_request': (requests or {}).get('memory'),
+                'memory_limit': (limits or {}).get('memory'),
+                'ephemeral_request': (requests or {}).get('ephemeral-storage'),
+                'ephemeral_limit': (limits or {}).get('ephemeral-storage'),
             }
-            for container in pod.spec.containers
-        ]
+
+            containers.append(
+                {
+                    'container_name': container.name,
+                    'container_image': container.image,
+                    'container_ports': cls.get_container_ports(container),
+                    'container_resources': container_resources,
+                }
+            )
+        return containers
 
     @classmethod
     def get_pod_response(cls, pod: V1Pod) -> dict:
@@ -684,14 +702,16 @@ class PodManager(KubernetesResourceManager):
             # Pod has no containers
             if pod['pod_containers'] == []:
                 raise ApiException(f'Pod {data.pod_name} has no containers')
-            # Pod needs a main container and a sidecar container
-            if len(pod['pod_containers']) != 2:
-                raise ApiException(f'Pod {data.pod_name} needs a main container and a sidecar container')
+            # Pod needs a main container and two sidecar containers
+            if len(pod['pod_containers']) != 3:
+                raise ApiException(f'Pod {data.pod_name} needs a main container, sidecar container and status sidecar container')
             container_names: list[str] = [container['container_name'] for container in pod['pod_containers']]
             if SNAPSHOT_SIDECAR_NAME not in container_names:
-                raise ApiException(f'Pod {data.pod_name} needs a sidecar container')
+                raise ApiException(f'Pod {data.pod_name} needs a snapshot sidecar container')
+            if STATUS_SIDECAR_NAME not in container_names:
+                raise ApiException(f'Pod {data.pod_name} needs a status sidecar container')
             if data.pod_name not in container_names:
-                raise ApiException(f'Pod {data.pod_name} needs a main container')
+                raise ApiException(f'Pod {data.pod_name} needs a main container, status sidecar container and snapshot sidecar container')
             # save the pod
             return {**SaveUtility.save_image(data), 'pod_name': data.pod_name, 'namespace_name': data.namespace_name}
         except TimeoutError as te:
@@ -730,6 +750,37 @@ class PodManager(KubernetesResourceManager):
                 name="snapshot-volume",
                 mount_path=SNAPSHOT_DIR
             )
+            # Build resource requirements from the request's ResourceRequirementsDataClass
+            rr: ResourceRequirementsDataClass | None = data.resource_requirements
+            requests: dict = {}
+            limits: dict = {}
+            if rr:
+                rr_dict: dict = rr.to_dict()
+                # Map dataclass fields to Kubernetes resource keys and bucket (requests/limits)
+                field_mapping: dict[str, tuple[str, str]] = {
+                    "cpu_request": ("requests", "cpu"),
+                    "cpu_limit": ("limits", "cpu"),
+                    "memory_request": ("requests", "memory"),
+                    "memory_limit": ("limits", "memory"),
+                    "ephemeral_request": ("requests", "ephemeral-storage"),
+                    "ephemeral_limit": ("limits", "ephemeral-storage"),
+                }
+                for field_name, (bucket, k8s_key) in field_mapping.items():
+                    value = rr_dict.get(field_name)
+                    if not value:
+                        continue
+                    if bucket == "requests":
+                        requests[k8s_key] = value
+                    else:
+                        limits[k8s_key] = value
+
+            resource_requirements_k8s: V1ResourceRequirements | None = None
+            if requests or limits:
+                resource_requirements_k8s = V1ResourceRequirements(
+                    requests=requests or None,
+                    limits=limits or None,
+                )
+
             containers: list[V1Container] = [
                 V1Container(
                     name=data.pod_name,
@@ -739,7 +790,8 @@ class PodManager(KubernetesResourceManager):
                     security_context=V1SecurityContext(
                         privileged=True
                     ),
-                    volume_mounts=[snapshot_volume_mount]
+                    volume_mounts=[snapshot_volume_mount],
+                    resources=resource_requirements_k8s or None,
                 ),
                 V1Container(
                     name=SNAPSHOT_SIDECAR_NAME,
@@ -747,14 +799,27 @@ class PodManager(KubernetesResourceManager):
                     security_context=V1SecurityContext(
                         privileged=True
                     ),
-                    volume_mounts=[snapshot_volume_mount]
+                    volume_mounts=[snapshot_volume_mount],
+                    resources=resource_requirements_k8s or None,
+                ),
+                V1Container(
+                    name=STATUS_SIDECAR_NAME,
+                    image=STATUS_SIDECAR_IMAGE_NAME,
+                    security_context=V1SecurityContext(
+                        privileged=True
+                    ),
+                    env=environment_variables,
+                    resources=resource_requirements_k8s or None,
                 )
             ]
-            # Create volumes for the pod
+            # Create volumes for the pod, with optional snapshot size limit
+            empty_dir_kwargs: dict = {}
+            if rr and rr.snapshot_size_limit:
+                empty_dir_kwargs["size_limit"] = rr.snapshot_size_limit
             volumes = [
                 V1Volume(
                     name="snapshot-volume",
-                    empty_dir=V1EmptyDirVolumeSource()
+                    empty_dir=V1EmptyDirVolumeSource(**empty_dir_kwargs),
                 )
             ]
 

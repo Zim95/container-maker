@@ -39,9 +39,15 @@ from src.resources.namespace_manager import NamespaceManager
 from src.resources.dataclasses.namespace.create_namespace_dataclass import CreateNamespaceDataClass
 from src.resources.pod_manager import PodManager
 from src.resources.dataclasses.pod.list_pod_dataclass import ListPodDataClass
-from src.resources.dataclasses.pod.create_pod_dataclass import CreatePodDataClass
+from src.resources.dataclasses.pod.create_pod_dataclass import CreatePodDataClass, ResourceRequirementsDataClass
 from src.common.config import REPO_NAME
-from src.resources.resource_config import SNAPSHOT_SIDECAR_NAME, SNAPSHOT_SIDECAR_IMAGE_NAME, POD_UPTIME_TIMEOUT
+from src.resources.resource_config import (
+    SNAPSHOT_SIDECAR_NAME,
+    SNAPSHOT_SIDECAR_IMAGE_NAME,
+    STATUS_SIDECAR_NAME,
+    STATUS_SIDECAR_IMAGE_NAME,
+    POD_UPTIME_TIMEOUT,
+)
 
 NAMESPACE_NAME: str = 'test-pod-manager'
 
@@ -56,16 +62,36 @@ class TestPodManager(TestCase):
         self.pod_name: str = 'test-ssh-pod'
         self.namespace_name: str = NAMESPACE_NAME
         self.target_ports: set = {22, 23}
+        # NOTE: The status sidecar will fail because the db connection details are not correct.
+        #       But thats ok, it doesn't affect the rest of the tests.
+        #       And we are not really worried about the status sidecar in this repository.
+        #       We will create separate tests for it in the correct repository itself.
         self.environment_variables: dict = {
             "SSH_USERNAME": "ubuntu",
-            "SSH_PASSWORD": "testpwd"
+            "SSH_PASSWORD": "testpwd",
+            "CONTAINER_ID": "1234567890",
+            "DB_USERNAME": "testuser",
+            "DB_PASSWORD": "testpassword",
+            "DB_NAME": "testdb",
+            "DB_HOST": "testhost",
+            "DB_PORT": "5432",
+            "DB_DATABASE": "testdatabase",
         }
+        self.resource_requirements: ResourceRequirementsDataClass = ResourceRequirementsDataClass(
+            cpu_request='100m',
+            cpu_limit='1',
+            memory_request='256Mi',
+            memory_limit='1Gi',
+            ephemeral_request='512Mi',
+            ephemeral_limit='1Gi',
+        )
         self.create_pod_data: CreatePodDataClass = CreatePodDataClass(
             image_name=self.image_name,
             pod_name=self.pod_name,
             namespace_name=self.namespace_name,
             target_ports=self.target_ports,
             environment_variables=self.environment_variables,
+            resource_requirements=self.resource_requirements,
         )
         NamespaceManager.create(CreateNamespaceDataClass(**{'namespace_name': self.namespace_name}))
 
@@ -88,19 +114,31 @@ class TestPodManager(TestCase):
         self.assertEqual(pod['pod_ip'] is not None, True)
         self.assertEqual(len(pod['pod_ports']), 2)  # since we have 2 target ports.
         self.assertEqual(pod['pod_labels'].get('app'), self.pod_name) # we have only one label, the app label which is the pod name
-        self.assertEqual(len(pod['pod_containers']), 2)  # there should be 2 containers in the pod: main, sidecar.
+        self.assertEqual(len(pod['pod_containers']), 3)  # there should be 3 containers in the pod: main, sidecar, status.
 
         # pod container names
         pod_container_names: list[str] = [container['container_name'] for container in pod['pod_containers']]
         self.assertEqual(SNAPSHOT_SIDECAR_NAME in pod_container_names, True)
         self.assertEqual(self.pod_name in pod_container_names, True)
+        self.assertEqual(STATUS_SIDECAR_NAME in pod_container_names, True)
 
         # pod container images
         pod_container_images: list[str] = [container['container_image'] for container in pod['pod_containers']]
         self.assertEqual(SNAPSHOT_SIDECAR_IMAGE_NAME in pod_container_images, True)
         self.assertEqual(self.image_name in pod_container_images, True)
+        self.assertEqual(STATUS_SIDECAR_IMAGE_NAME in pod_container_images, True)
 
-        # list all pods -> should have a list.
+        # pod container resources
+        pod_container_resources: list[dict] = [container['container_resources'] for container in pod['pod_containers']]
+        for container_resource in pod_container_resources:
+            self.assertEqual(container_resource['cpu_request'], self.resource_requirements.cpu_request)
+            self.assertEqual(container_resource['cpu_limit'], self.resource_requirements.cpu_limit)
+            self.assertEqual(container_resource['memory_request'], self.resource_requirements.memory_request)
+            self.assertEqual(container_resource['memory_limit'], self.resource_requirements.memory_limit)
+            self.assertEqual(container_resource['ephemeral_request'], self.resource_requirements.ephemeral_request)
+            self.assertEqual(container_resource['ephemeral_limit'], self.resource_requirements.ephemeral_limit)
+
+        # list all pods -> should have one item on the list.
         pods_new: list[dict] = PodManager.list(ListPodDataClass(**{'namespace_name': self.namespace_name}))
         assert len(pods_new) == 1
 

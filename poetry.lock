@@ -540,8 +540,10 @@ grpcio-tools = "^1.70.0"
 protobuf = "^5.29.0"
 
 [package.source]
-type = "directory"
-url = "container-maker-spec"
+type = "git"
+url = "https://github.com/Zim95/container-maker-spec.git"
+reference = "HEAD"
+resolved_reference = "4c1b6428c22a8d3be7844fc113166383593ccf59"
 
 [[package]]
 name = "cryptography"
@@ -2857,4 +2859,4 @@ type = ["pytest-mypy"]
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.8,<3.12"
-content-hash = "46401235f0464fc9d73a06f96badd3daafd97a95ecbb960f00afae54167529bb"
+content-hash = "42994864dfc8a56c77f7d604916f29afc8b5add1bf1d868112ad15c1adbc9ee8"
