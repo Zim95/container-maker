@@ -90,7 +90,8 @@ class TestServiceManager(TestCase):
         self.assertEqual(service['service_namespace'], self.namespace_name)
         self.assertEqual(len(service['service_ports']), 1)  # since we have only 1 service port.
         self.assertEqual(service['service_ip'] is not None, True)
-        self.assertEqual(len(service['associated_pods']), 1)
+        # associated_resources now represents pods behind the service
+        self.assertEqual(len(service['associated_resources']), 1)
         self.assertEqual(service['service_type'], ServiceType.LOAD_BALANCER.value)
         # delete the service
         ServiceManager.delete(DeleteServiceDataClass(**{'namespace_name': self.namespace_name, 'service_name': self.service_name}))
@@ -114,7 +115,7 @@ class TestServiceManager(TestCase):
         self.assertEqual(first_service['service_namespace'], self.namespace_name)
         self.assertEqual(len(first_service['service_ports']), 1)  # since we have only 1 service port.
         self.assertEqual(first_service['service_ip'] is not None, True)
-        self.assertEqual(len(first_service['associated_pods']), 1)
+        self.assertEqual(len(first_service['associated_resources']), 1)
         self.assertEqual(first_service['service_type'], ServiceType.LOAD_BALANCER.value)
         # create second service
         second_service: dict = ServiceManager.create(self.create_service_data)
@@ -124,7 +125,7 @@ class TestServiceManager(TestCase):
         self.assertEqual(second_service['service_namespace'], self.namespace_name)
         self.assertEqual(len(second_service['service_ports']), 1)  # since we have only 1 service port.
         self.assertEqual(second_service['service_ip'] is not None, True)
-        self.assertEqual(len(second_service['associated_pods']), 1)
+        self.assertEqual(len(second_service['associated_resources']), 1)
         self.assertEqual(second_service['service_type'], ServiceType.LOAD_BALANCER.value)
         # verify that the services are the same
         self.assertEqual(first_uid, second_uid)
@@ -153,7 +154,7 @@ class TestServiceManager(TestCase):
         self.assertEqual(service['service_namespace'], self.namespace_name)
         self.assertEqual(len(service['service_ports']), 1)  # since we have only 1 service port.
         self.assertEqual(service['service_ip'] is not None, True)
-        self.assertEqual(len(service['associated_pods']), 1)
+        self.assertEqual(len(service['associated_resources']), 1)
         self.assertEqual(service['service_type'], ServiceType.NODE_PORT.value)
 
         # cleanup
@@ -177,7 +178,7 @@ class TestServiceManager(TestCase):
         self.assertEqual(service['service_namespace'], self.namespace_name)
         self.assertEqual(len(service['service_ports']), 1)  # since we have only 1 service port.
         self.assertEqual(service['service_ip'] is not None, True)
-        self.assertEqual(len(service['associated_pods']), 1)
+        self.assertEqual(len(service['associated_resources']), 1)
         self.assertEqual(service['service_type'], ServiceType.CLUSTER_IP.value)
 
         # cleanup

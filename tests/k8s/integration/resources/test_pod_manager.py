@@ -113,23 +113,26 @@ class TestPodManager(TestCase):
         self.assertEqual(pod['pod_namespace'], self.namespace_name)
         self.assertEqual(pod['pod_ip'] is not None, True)
         self.assertEqual(len(pod['pod_ports']), 2)  # since we have 2 target ports.
-        self.assertEqual(pod['pod_labels'].get('app'), self.pod_name) # we have only one label, the app label which is the pod name
-        self.assertEqual(len(pod['pod_containers']), 3)  # there should be 3 containers in the pod: main, sidecar, status.
+        self.assertEqual(pod['pod_labels'].get('app'), self.pod_name)  # label is app=pod_name
+        # associated_resources now contains the pod's containers
+        self.assertEqual(len(pod['associated_resources']), 3)  # main, snapshot, status containers
 
         # pod container names
-        pod_container_names: list[str] = [container['container_name'] for container in pod['pod_containers']]
+        pod_container_names: list[str] = [container['container_name'] for container in pod['associated_resources']]
         self.assertEqual(SNAPSHOT_SIDECAR_NAME in pod_container_names, True)
         self.assertEqual(self.pod_name in pod_container_names, True)
         self.assertEqual(STATUS_SIDECAR_NAME in pod_container_names, True)
 
         # pod container images
-        pod_container_images: list[str] = [container['container_image'] for container in pod['pod_containers']]
+        pod_container_images: list[str] = [container['container_image'] for container in pod['associated_resources']]
         self.assertEqual(SNAPSHOT_SIDECAR_IMAGE_NAME in pod_container_images, True)
         self.assertEqual(self.image_name in pod_container_images, True)
         self.assertEqual(STATUS_SIDECAR_IMAGE_NAME in pod_container_images, True)
 
         # pod container resources
-        pod_container_resources: list[dict] = [container['container_resources'] for container in pod['pod_containers']]
+        pod_container_resources: list[dict] = [
+            container['container_resources'] for container in pod['associated_resources']
+        ]
         for container_resource in pod_container_resources:
             self.assertEqual(container_resource['cpu_request'], self.resource_requirements.cpu_request)
             self.assertEqual(container_resource['cpu_limit'], self.resource_requirements.cpu_limit)

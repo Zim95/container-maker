@@ -567,6 +567,7 @@ class PodManager(KubernetesResourceManager):
 
             containers.append(
                 {
+                    'resource_type': 'pod_container',
                     'container_name': container.name,
                     'container_image': container.image,
                     'container_ports': cls.get_container_ports(container),
@@ -583,13 +584,14 @@ class PodManager(KubernetesResourceManager):
         :returns: dict: Pod Details
         '''
         return {
+            'resource_type': 'pod',
             'pod_id': pod.metadata.uid,
             'pod_name': pod.metadata.name,
             'pod_namespace': pod.metadata.namespace,
             'pod_ip': cls.get_pod_ip(pod.metadata.namespace, pod.metadata.name),
             'pod_ports': cls.get_pod_ports(pod),
             'pod_labels': pod.metadata.labels or {},
-            'pod_containers': cls.get_pod_containers(pod),
+            'associated_resources': cls.get_pod_containers(pod),
         }
 
     @classmethod
@@ -700,12 +702,12 @@ class PodManager(KubernetesResourceManager):
             if pod == {}:
                 raise ApiException(f'Pod {data.pod_name} not found')
             # Pod has no containers
-            if pod['pod_containers'] == []:
+            if pod['associated_resources'] == []:
                 raise ApiException(f'Pod {data.pod_name} has no containers')
             # Pod needs a main container and two sidecar containers
-            if len(pod['pod_containers']) != 3:
+            if len(pod['associated_resources']) != 3:
                 raise ApiException(f'Pod {data.pod_name} needs a main container, sidecar container and status sidecar container')
-            container_names: list[str] = [container['container_name'] for container in pod['pod_containers']]
+            container_names: list[str] = [container['container_name'] for container in pod['associated_resources']]
             if SNAPSHOT_SIDECAR_NAME not in container_names:
                 raise ApiException(f'Pod {data.pod_name} needs a snapshot sidecar container')
             if STATUS_SIDECAR_NAME not in container_names:

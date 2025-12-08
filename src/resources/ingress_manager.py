@@ -72,6 +72,37 @@ class IngressManager(KubernetesResourceManager):
         ]
 
     @classmethod
+    def get_ingress_response(cls, ingress: V1Ingress, ingress_ip: str | None = None) -> dict:
+        """
+        Format a V1Ingress into a consistent response dictionary.
+
+        Args:
+            ingress: The Kubernetes V1Ingress object.
+            ingress_ip: Optional override for the ingress IP/hostname. If not
+                        provided, it is derived from the ingress status.
+        """
+        if ingress_ip is None:
+            if ingress.status.load_balancer.ingress:
+                ingress_ip = (
+                    ingress.status.load_balancer.ingress[0].ip
+                    or ingress.status.load_balancer.ingress[0].hostname
+                )
+            else:
+                ingress_ip = None
+
+        associated_services: list[dict] = cls.get_associated_services(ingress.to_dict())
+
+        return {
+            'resource_type': 'ingress',
+            'ingress_id': ingress.metadata.uid,
+            'ingress_name': ingress.metadata.name,
+            'ingress_namespace': ingress.metadata.namespace,
+            'ingress_ip': ingress_ip,
+            'ingress_ports': cls.get_ingress_ports(),   
+            'associated_resources': associated_services,
+        }
+
+    @classmethod
     def list(cls, data: ListIngressDataClass) -> list[dict]:
         '''
         List all ingress in a namespace.
@@ -79,18 +110,7 @@ class IngressManager(KubernetesResourceManager):
         try:
             cls.check_kubernetes_client()
             return [
-                {
-                    'ingress_id': ingress.metadata.uid,
-                    'ingress_name': ingress.metadata.name,
-                    'ingress_namespace': ingress.metadata.namespace,
-                    'ingress_ip': (
-                        ingress.status.load_balancer.ingress[0].ip or 
-                        ingress.status.load_balancer.ingress[0].hostname
-                        if ingress.status.load_balancer.ingress else None
-                    ),
-                    'ingress_ports': cls.get_ingress_ports(),
-                    'associated_services': cls.get_associated_services(ingress.to_dict()),
-                }
+                cls.get_ingress_response(ingress)
                 for ingress in cls.client.list_namespaced_ingress(data.namespace_name).items
             ]
         except ApiException as ae:
@@ -108,18 +128,7 @@ class IngressManager(KubernetesResourceManager):
         try:
             cls.check_kubernetes_client()
             response: V1Ingress = cls.client.read_namespaced_ingress(data.ingress_name, data.namespace_name)
-            return {
-                'ingress_id': response.metadata.uid,
-                'ingress_name': response.metadata.name,
-                'ingress_namespace': response.metadata.namespace,
-                'ingress_ip': (
-                    response.status.load_balancer.ingress[0].ip or 
-                    response.status.load_balancer.ingress[0].hostname
-                    if response.status.load_balancer.ingress else None
-                ),
-                'ingress_ports': cls.get_ingress_ports(),
-                'associated_services': cls.get_associated_services(response.to_dict()),
-            }
+            return cls.get_ingress_response(response)
         except ApiException as ae:
             if ae.status == 404:
                 return {}
@@ -235,15 +244,9 @@ class IngressManager(KubernetesResourceManager):
                 body=ingress_manifest
             )
 
-            # Return a summary of the created ingress
-            return {
-                'ingress_id': ingress.metadata.uid,
-                'ingress_name': ingress.metadata.name,
-                'ingress_namespace': ingress.metadata.namespace,
-                'ingress_ip': cls.get_ingress_ip(data.namespace_name, data.ingress_name),
-                'ingress_ports': cls.get_ingress_ports(),
-                'associated_services': cls.get_associated_services(ingress.to_dict()),
-            }
+            # Resolve IP/hostname with timeout and return formatted response
+            ingress_ip: str = cls.get_ingress_ip(data.namespace_name, data.ingress_name)
+            return cls.get_ingress_response(ingress, ingress_ip=ingress_ip)
         except ApiException as ae:
             raise ApiException(f'Error occured while creating ingress: {str(ae)}') from ae
         except UnsupportedRuntimeEnvironment as ure:

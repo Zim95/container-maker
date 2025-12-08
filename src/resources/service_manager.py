@@ -73,15 +73,7 @@ class ServiceManager(KubernetesResourceManager):
         try:
             cls.check_kubernetes_client()
             return [
-                {
-                    'service_id': service.metadata.uid,
-                    'service_name': service.metadata.name,
-                    'service_namespace': service.metadata.namespace,
-                    'service_ip': service._spec.cluster_ip,
-                    'service_ports': cls.get_service_ports(service),
-                    'service_type': service.spec.type,
-                    'associated_pods': cls.get_associated_pods(service.to_dict()),
-                }
+                cls.get_service_response(service)
                 for service in cls.client.list_namespaced_service(namespace=data.namespace_name).items
             ]
         except ApiException as ae:
@@ -90,6 +82,30 @@ class ServiceManager(KubernetesResourceManager):
             raise UnsupportedRuntimeEnvironment(f'Unsupported Runtime Environment: {str(ure)}') from ure
         except Exception as e:
             raise Exception(f'Unknown error occurred: {str(e)}') from e
+
+    @classmethod
+    def get_service_response(cls, service: V1Service, service_ip: str | None = None) -> dict:
+        """
+        Format a V1Service into a consistent response dictionary.
+
+        Args:
+            service: The Kubernetes V1Service object.
+            service_ip: Optional override for the service IP. If not provided,
+                        the IP is taken directly from the service's cluster_ip.
+        """
+        ip_value = service_ip if service_ip is not None else service._spec.cluster_ip
+        associated_pods: list[dict] = cls.get_associated_pods(service.to_dict())
+
+        return {
+            'resource_type': 'service',
+            'service_id': service.metadata.uid,
+            'service_name': service.metadata.name,
+            'service_namespace': service.metadata.namespace,
+            'service_ip': ip_value,
+            'service_ports': cls.get_service_ports(service),
+            'service_type': service.spec.type,
+            'associated_resources': associated_pods,
+        }
 
     @classmethod
     def get(cls, data: GetServiceDataClass) -> V1Service:
@@ -101,15 +117,7 @@ class ServiceManager(KubernetesResourceManager):
         try:
             cls.check_kubernetes_client()
             response: V1Service = cls.client.read_namespaced_service(name=data.service_name, namespace=data.namespace_name)
-            return {
-                'service_id': response.metadata.uid,
-                'service_name': response.metadata.name,
-                'service_namespace': response.metadata.namespace,
-                'service_ip': response._spec.cluster_ip,
-                'service_ports': cls.get_service_ports(response),
-                'service_type': response.spec.type,
-                'associated_pods': cls.get_associated_pods(response.to_dict()),
-            }
+            return cls.get_service_response(response)
         except ApiException as ae:
             if ae.status == 404:
                 return {}
@@ -199,16 +207,9 @@ class ServiceManager(KubernetesResourceManager):
             )
             # create the service
             service: V1Service = cls.client.create_namespaced_service(data.namespace_name, service_manifest)
-            # return the details
-            return {
-                "service_id": service.metadata.uid,
-                "service_ip": cls.get_service_ip(data.namespace_name, data.service_name),
-                "service_name": service.metadata.name,
-                "service_namespace": service.metadata.namespace,
-                "service_ports": cls.get_service_ports(service),
-                "service_type": service.spec.type,
-                "associated_pods": cls.get_associated_pods(service.to_dict()),
-            }
+            # resolve IP with timeout and return formatted response
+            service_ip: str = cls.get_service_ip(data.namespace_name, data.service_name)
+            return cls.get_service_response(service, service_ip=service_ip)
         except ApiException as ae:
             raise ApiException(f'Error occurred while creating service: {str(ae)}') from ae
         except UnsupportedRuntimeEnvironment as ure:
