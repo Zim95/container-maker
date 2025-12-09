@@ -27,7 +27,7 @@ from src.resources.dataclasses.ingress.list_ingress_dataclass import ListIngress
 from src.resources.dataclasses.namespace.create_namespace_dataclass import CreateNamespaceDataClass
 from src.resources.dataclasses.namespace.delete_namespace_dataclass import DeleteNamespaceDataClass
 from src.resources.dataclasses.namespace.get_namespace_dataclass import GetNamespaceDataClass
-from src.resources.dataclasses.pod.create_pod_dataclass import CreatePodDataClass
+from src.resources.dataclasses.pod.create_pod_dataclass import CreatePodDataClass, ResourceRequirementsDataClass
 from src.resources.dataclasses.pod.delete_pod_dataclass import DeletePodDataClass
 from src.resources.dataclasses.pod.list_pod_dataclass import ListPodDataClass
 from src.resources.dataclasses.pod.save_pod_dataclass import SavePodDataClass
@@ -98,7 +98,8 @@ class KubernetesContainerHelper:
             namespace_name=namespace_name,
             service_name=service_name,
         ))
-        associated_pods: list = service.get('associated_pods', [])
+        # FIX: Use 'associated_resources' instead of 'associated_pods'
+        associated_pods: list = service.get('associated_resources', [])
         for pod in associated_pods:
             cls.delete_pod(namespace_name=namespace_name, pod_name=pod['pod_name'])
         ServiceManager.delete(DeleteServiceDataClass(
@@ -112,7 +113,8 @@ class KubernetesContainerHelper:
             namespace_name=namespace_name,
             ingress_name=ingress_name,
         ))
-        associated_services: list = ingress.get('associated_services', [])
+        # FIX: Use 'associated_resources' instead of 'associated_services'
+        associated_services: list = ingress.get('associated_resources', [])
         for service in associated_services:
             cls.delete_service(namespace_name=namespace_name, service_name=service['service_name'])
         IngressManager.delete(DeleteIngressDataClass(
@@ -169,14 +171,14 @@ class KubernetesContainerManager(ContainerManager):
         if not namespace:
             return []
         ingresses: list = IngressManager.list(ListIngressDataClass(**{'namespace_name': data.network_name}))
-        ingress_services: list = [service for ingress in ingresses for service in ingress.get('associated_services', [])]
-        ingress_pods: list = [pod for service in ingress_services for pod in service.get('associated_pods', [])]
+        ingress_services: list = [service for ingress in ingresses for service in ingress.get('associated_resources', [])]
+        ingress_pods: list = [pod for service in ingress_services for pod in service.get('associated_resources', [])]
         ingress_services_ids: list = [service['service_id'] for service in ingress_services]
         ingress_pods_ids: list = [pod['pod_id'] for pod in ingress_pods]
 
         services: list = ServiceManager.list(ListServiceDataClass(**{'namespace_name': data.network_name}))
         unique_services: list = [service for service in services if service['service_id'] not in ingress_services_ids]
-        unique_service_pods: list = [pod for service in unique_services for pod in service.get('associated_pods', [])]
+        unique_service_pods: list = [pod for service in unique_services for pod in service.get('associated_resources', [])]
         unique_service_pods_ids: list = [pod['pod_id'] for pod in unique_service_pods]
 
         pod_ids_to_exclude: list = ingress_pods_ids + unique_service_pods_ids
@@ -188,31 +190,37 @@ class KubernetesContainerManager(ContainerManager):
         for ingress in ingresses:
             containers.append(
                 {
+                    'container_type': 'ingress',
                     'container_id': ingress['ingress_id'],
                     'container_name': ingress['ingress_name'],
                     'container_ip': ingress['ingress_ip'],
                     'container_network': ingress['ingress_namespace'],
                     'container_ports': ingress['ingress_ports'],
+                    'container_associated_resources': ingress['associated_resources'],
                 }
             )
         for service in unique_services:
             containers.append(
                 {
+                    'container_type': 'service',
                     'container_id': service['service_id'],
                     'container_name': service['service_name'],
                     'container_ip': service['service_ip'],
                     'container_network': service['service_namespace'],
-                    'container_ports': service['service_ports']
+                    'container_ports': service['service_ports'],
+                    'container_associated_resources': service['associated_resources'],
                 }
             )
         for pod in unique_pods:
             containers.append(
                 {
+                    'container_type': 'pod',
                     'container_id': pod['pod_id'],
                     'container_name': pod['pod_name'],
                     'container_ip': pod['pod_ip'],
                     'container_network': pod['pod_namespace'],
-                    'container_ports': pod['pod_ports']
+                    'container_ports': pod['pod_ports'],
+                    'container_associated_resources': pod['associated_resources'],
                 }
             )
         return containers
@@ -242,11 +250,13 @@ class KubernetesContainerManager(ContainerManager):
 
         # final value
         return {
+            'container_type': final_container['resource_type'],
             'container_id': final_container[id_key],
             'container_name': final_container[name_key],
             'container_ip': final_container[ip_key],
             'container_network': final_container[network_key],
             'container_ports': final_container[ports_key],
+            'container_associated_resources': final_container['associated_resources'],
         }
 
     @classmethod
@@ -316,12 +326,22 @@ class KubernetesContainerManager(ContainerManager):
             cls.validate_publish_information(data.publish_information)
             final_container: dict = {}
             # create the pod.
+            resource_requirements: ResourceRequirementsDataClass = ResourceRequirementsDataClass(
+                cpu_request=data.resource_requirements.cpu_request,
+                cpu_limit=data.resource_requirements.cpu_limit,
+                memory_request=data.resource_requirements.memory_request,
+                memory_limit=data.resource_requirements.memory_limit,
+                ephemeral_request=data.resource_requirements.ephemeral_request,
+                ephemeral_limit=data.resource_requirements.ephemeral_limit,
+                snapshot_size_limit=data.resource_requirements.snapshot_size_limit,
+            )
             pod: dict = PodManager.create(CreatePodDataClass(
                 image_name=data.image_name,
                 pod_name=f'{data.container_name}-pod',
                 namespace_name=data.network_name,
                 target_ports={pi.target_port for pi in data.publish_information},
                 environment_variables=data.environment_variables,
+                resource_requirements=resource_requirements,
             ))
             final_container = pod
             # create the service if exposure level is greater than ExposureLevel.INTERNAL
@@ -363,11 +383,13 @@ class KubernetesContainerManager(ContainerManager):
             ports_key: str = [key for key in final_container.keys() if key.endswith('_ports')][0]
 
             return {
+                'container_type': final_container['resource_type'],
                 'container_id': final_container[id_key],
                 'container_name': final_container[name_key],
                 'container_ip': final_container[ip_key],
                 'container_network': final_container[network_key],
                 'container_ports': final_container[ports_key],
+                'container_associated_resources': final_container['associated_resources'],
             }
         except TimeoutError as te:
             raise TimeoutError(te) from te

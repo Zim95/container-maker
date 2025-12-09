@@ -3,7 +3,11 @@ from unittest import TestCase
 
 # modules
 from src.containers.containers import KubernetesContainerManager
-from src.containers.dataclasses.create_container_dataclass import CreateContainerDataClass, ExposureLevel
+from src.containers.dataclasses.create_container_dataclass import (
+    CreateContainerDataClass,
+    ExposureLevel,
+    ResourceRequirementsDataClass,
+)
 from src.containers.dataclasses.delete_container_dataclass import DeleteContainerDataClass
 from src.resources.dataclasses.ingress.list_ingress_dataclass import ListIngressDataClass
 from src.resources.dataclasses.pod.list_pod_dataclass import ListPodDataClass
@@ -83,12 +87,28 @@ class TestDeleteContainer(TestCase):
         self.namespace_name: str = NAMESPACE_NAME
         self.container_name: str = 'test-container'
         self.image_name: str = 'zim95/ssh_ubuntu:latest'
+        self.resource_requirements: ResourceRequirementsDataClass = ResourceRequirementsDataClass(
+            cpu_request='100m',
+            cpu_limit='1',
+            memory_request='256Mi',
+            memory_limit='1Gi',
+            ephemeral_request='512Mi',
+            ephemeral_limit='1Gi',
+            snapshot_size_limit='2Gi',
+        )
         self.publish_information: list[PublishInformationDataClass] = [
             PublishInformationDataClass(publish_port=2222, target_port=22, protocol='TCP'),
         ]
-        self.environment_variables: dict[str, str] = {
-            'SSH_PASSWORD': '12345678',
-            'SSH_USERNAME': 'test-user',
+        self.environment_variables: dict = {
+            "SSH_USERNAME": "ubuntu",
+            "SSH_PASSWORD": "testpwd",
+            "CONTAINER_ID": "1234567890",
+            "DB_USERNAME": "testuser",
+            "DB_PASSWORD": "testpassword",
+            "DB_NAME": "testdb",
+            "DB_HOST": "testhost",
+            "DB_PORT": "5432",
+            "DB_DATABASE": "testdatabase",
         }
         self.pod_container_data: CreateContainerDataClass = CreateContainerDataClass(
             container_name=f'{self.container_name}-internal',
@@ -97,6 +117,7 @@ class TestDeleteContainer(TestCase):
             exposure_level=ExposureLevel.INTERNAL,
             publish_information=self.publish_information,
             environment_variables=self.environment_variables,
+            resource_requirements=self.resource_requirements,
         )
         self.service_container_data: CreateContainerDataClass = CreateContainerDataClass(
             container_name=f'{self.container_name}-cluster-local',
@@ -105,6 +126,7 @@ class TestDeleteContainer(TestCase):
             exposure_level=ExposureLevel.CLUSTER_LOCAL,
             publish_information=self.publish_information,
             environment_variables=self.environment_variables,
+            resource_requirements=self.resource_requirements,
         )
         self.ingress_container_data: CreateContainerDataClass = CreateContainerDataClass(
             container_name=f'{self.container_name}-exposed',
@@ -113,6 +135,7 @@ class TestDeleteContainer(TestCase):
             exposure_level=ExposureLevel.EXPOSED,
             publish_information=self.publish_information,
             environment_variables=self.environment_variables,
+            resource_requirements=self.resource_requirements,
         )
 
     def test_a_delete_ingress(self) -> None:

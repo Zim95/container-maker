@@ -6,6 +6,7 @@ from src.containers.containers import KubernetesContainerManager
 from src.containers.dataclasses.create_container_dataclass import CreateContainerDataClass, ExposureLevel
 from src.containers.dataclasses.delete_container_dataclass import DeleteContainerDataClass
 from src.resources.dataclasses.ingress.list_ingress_dataclass import ListIngressDataClass
+from src.resources.dataclasses.pod.create_pod_dataclass import ResourceRequirementsDataClass
 from src.resources.dataclasses.pod.list_pod_dataclass import ListPodDataClass
 from src.resources.dataclasses.service.create_service_dataclass import PublishInformationDataClass
 from src.resources.dataclasses.service.list_service_dataclass import ListServiceDataClass
@@ -38,12 +39,28 @@ class TestCreateContainer(TestCase):
         self.namespace_name: str = NAMESPACE_NAME
         self.image_name: str = 'zim95/ssh_ubuntu:latest'
         self.exposure_level: ExposureLevel = ExposureLevel.INTERNAL
+        self.resource_requirements: ResourceRequirementsDataClass = ResourceRequirementsDataClass(
+            cpu_request='100m',
+            cpu_limit='1',
+            memory_request='256Mi',
+            memory_limit='1Gi',
+            ephemeral_request='512Mi',
+            ephemeral_limit='1Gi',
+            snapshot_size_limit='2Gi',
+        )
         self.publish_information: list[PublishInformationDataClass] = [
             PublishInformationDataClass(publish_port=2222, target_port=22, protocol='TCP'),
         ]
-        self.environment_variables: dict[str, str] = {
-            'SSH_PASSWORD': '12345678',
-            'SSH_USERNAME': 'test-user',
+        self.environment_variables: dict = {
+            "SSH_USERNAME": "ubuntu",
+            "SSH_PASSWORD": "testpwd",
+            "CONTAINER_ID": "1234567890",
+            "DB_USERNAME": "testuser",
+            "DB_PASSWORD": "testpassword",
+            "DB_NAME": "testdb",
+            "DB_HOST": "testhost",
+            "DB_PORT": "5432",
+            "DB_DATABASE": "testdatabase",
         }
         self.container_data: CreateContainerDataClass = CreateContainerDataClass(
             container_name=self.container_name,
@@ -52,6 +69,7 @@ class TestCreateContainer(TestCase):
             exposure_level=self.exposure_level,
             publish_information=self.publish_information,
             environment_variables=self.environment_variables,
+            resource_requirements=self.resource_requirements,
         )
 
     def test_a_creation_of_container_internal(self) -> None:
@@ -80,6 +98,14 @@ class TestCreateContainer(TestCase):
         self.assertEqual(container['container_network'], self.namespace_name)
         self.assertEqual(len(container['container_ports']), 1)
         self.assertEqual(container['container_ports'][0]['container_port'], 22)
+        # resources check
+        self.assertEqual(container['container_associated_resources'][0]['container_resources']['cpu_request'], '100m')
+        self.assertEqual(container['container_associated_resources'][0]['container_resources']['cpu_limit'], '1')
+        self.assertEqual(container['container_associated_resources'][0]['container_resources']['memory_request'], '256Mi')
+        self.assertEqual(container['container_associated_resources'][0]['container_resources']['memory_limit'], '1Gi')
+        self.assertEqual(container['container_associated_resources'][0]['container_resources']['ephemeral_request'], '512Mi')
+        self.assertEqual(container['container_associated_resources'][0]['container_resources']['ephemeral_limit'], '1Gi')
+        self.assertEqual(container['container_associated_resources'][0]['container_resources']['snapshot_size_limit'], '2Gi')
 
     def test_b_creation_of_container_cluster_local(self) -> None:
         '''
@@ -107,6 +133,14 @@ class TestCreateContainer(TestCase):
         self.assertEqual(container['container_network'], self.namespace_name)
         self.assertEqual(len(container['container_ports']), 1)
         self.assertEqual(container['container_ports'][0]['container_port'], 2222)
+        # resources check
+        self.assertEqual(container['container_associated_resources'][0]['associated_resources'][0]['container_resources']['cpu_request'], '100m')
+        self.assertEqual(container['container_associated_resources'][0]['associated_resources'][0]['container_resources']['cpu_limit'], '1')
+        self.assertEqual(container['container_associated_resources'][0]['associated_resources'][0]['container_resources']['memory_request'], '256Mi')
+        self.assertEqual(container['container_associated_resources'][0]['associated_resources'][0]['container_resources']['memory_limit'], '1Gi')
+        self.assertEqual(container['container_associated_resources'][0]['associated_resources'][0]['container_resources']['ephemeral_request'], '512Mi')
+        self.assertEqual(container['container_associated_resources'][0]['associated_resources'][0]['container_resources']['ephemeral_limit'], '1Gi')
+        self.assertEqual(container['container_associated_resources'][0]['associated_resources'][0]['container_resources']['snapshot_size_limit'], '2Gi')
 
     def test_c_creation_of_container_cluster_external(self) -> None:
         '''
@@ -134,6 +168,14 @@ class TestCreateContainer(TestCase):
         self.assertEqual(container['container_network'], self.namespace_name)
         self.assertEqual(len(container['container_ports']), 1)
         self.assertEqual(container['container_ports'][0]['container_port'], 2222)
+        # resources check
+        self.assertEqual(container['container_associated_resources'][0]['associated_resources'][0]['container_resources']['cpu_request'], '100m')
+        self.assertEqual(container['container_associated_resources'][0]['associated_resources'][0]['container_resources']['cpu_limit'], '1')
+        self.assertEqual(container['container_associated_resources'][0]['associated_resources'][0]['container_resources']['memory_request'], '256Mi')
+        self.assertEqual(container['container_associated_resources'][0]['associated_resources'][0]['container_resources']['memory_limit'], '1Gi')
+        self.assertEqual(container['container_associated_resources'][0]['associated_resources'][0]['container_resources']['ephemeral_request'], '512Mi')
+        self.assertEqual(container['container_associated_resources'][0]['associated_resources'][0]['container_resources']['ephemeral_limit'], '1Gi')
+        self.assertEqual(container['container_associated_resources'][0]['associated_resources'][0]['container_resources']['snapshot_size_limit'], '2Gi')
 
     def test_d_creation_of_container_exposed(self) -> None:
         '''
@@ -160,6 +202,14 @@ class TestCreateContainer(TestCase):
         self.assertIsNotNone(container['container_ip'])
         self.assertEqual(container['container_network'], self.namespace_name)
         self.assertEqual(len(container['container_ports']), 2)
+        # resources check
+        self.assertEqual(container['container_associated_resources'][0]['associated_resources'][0]['associated_resources'][0]['container_resources']['cpu_request'], '100m')
+        self.assertEqual(container['container_associated_resources'][0]['associated_resources'][0]['associated_resources'][0]['container_resources']['cpu_limit'], '1')
+        self.assertEqual(container['container_associated_resources'][0]['associated_resources'][0]['associated_resources'][0]['container_resources']['memory_request'], '256Mi')
+        self.assertEqual(container['container_associated_resources'][0]['associated_resources'][0]['associated_resources'][0]['container_resources']['memory_limit'], '1Gi')
+        self.assertEqual(container['container_associated_resources'][0]['associated_resources'][0]['associated_resources'][0]['container_resources']['ephemeral_request'], '512Mi')
+        self.assertEqual(container['container_associated_resources'][0]['associated_resources'][0]['associated_resources'][0]['container_resources']['ephemeral_limit'], '1Gi')
+        self.assertEqual(container['container_associated_resources'][0]['associated_resources'][0]['associated_resources'][0]['container_resources']['snapshot_size_limit'], '2Gi')
 
     def tearDown(self) -> None:
         '''
