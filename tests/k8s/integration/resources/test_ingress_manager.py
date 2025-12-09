@@ -55,6 +55,7 @@ class TestIngressManager(TestCase):
             memory_limit='1Gi',
             ephemeral_request='512Mi',
             ephemeral_limit='1Gi',
+            snapshot_size_limit='2Gi',
         )
         self.create_pod_data: CreatePodDataClass = CreatePodDataClass(
             image_name=self.image_name,

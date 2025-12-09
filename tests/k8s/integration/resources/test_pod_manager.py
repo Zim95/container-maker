@@ -84,6 +84,7 @@ class TestPodManager(TestCase):
             memory_limit='1Gi',
             ephemeral_request='512Mi',
             ephemeral_limit='1Gi',
+            snapshot_size_limit='2Gi',
         )
         self.create_pod_data: CreatePodDataClass = CreatePodDataClass(
             image_name=self.image_name,
@@ -140,6 +141,7 @@ class TestPodManager(TestCase):
             self.assertEqual(container_resource['memory_limit'], self.resource_requirements.memory_limit)
             self.assertEqual(container_resource['ephemeral_request'], self.resource_requirements.ephemeral_request)
             self.assertEqual(container_resource['ephemeral_limit'], self.resource_requirements.ephemeral_limit)
+            self.assertEqual(container_resource['snapshot_size_limit'], self.resource_requirements.snapshot_size_limit)
 
         # list all pods -> should have one item on the list.
         pods_new: list[dict] = PodManager.list(ListPodDataClass(**{'namespace_name': self.namespace_name}))

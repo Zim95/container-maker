@@ -21,7 +21,7 @@ class ResourceRequirementsDataClass:
     ephemeral_request: Optional[str] = '512Mi'
     ephemeral_limit: Optional[str] = '1Gi'
     # Snapshot volume size limit
-    snapshot_size_limit: Optional[str] = '512Mi'
+    snapshot_size_limit: Optional[str] = '2Gi'
 
     def to_dict(self) -> dict:
         '''

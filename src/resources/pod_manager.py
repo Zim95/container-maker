@@ -551,8 +551,22 @@ class PodManager(KubernetesResourceManager):
             return []
 
         containers: list[dict] = []
+
+        # snapshot_size_limit is a property of the EmptyDir volume, not a
+        # Kubernetes compute resource. Derive it once from the pod's volumes
+        # (e.g. the "snapshot-volume" EmptyDir.size_limit) and then attach it
+        # to each container's resource view for convenience.
+        snapshot_size_limit: str | None = None
+        if pod.spec.volumes:
+            for volume in pod.spec.volumes:
+                empty_dir: V1EmptyDirVolumeSource | None = getattr(volume, "empty_dir", None)
+                if empty_dir is not None and getattr(empty_dir, "size_limit", None):
+                    # If multiple volumes exist, we take the first one that has a size_limit.
+                    snapshot_size_limit = empty_dir.size_limit
+                    break
+
         for container in pod.spec.containers:
-            # Derive per-container resource info from the Kubernetes spec
+            # Derive per-container compute resources from the Kubernetes spec
             resources: V1ResourceRequirements = container.resources or V1ResourceRequirements()
             requests: dict | None = getattr(resources, "requests", None)
             limits: dict | None = getattr(resources, "limits", None)
@@ -563,6 +577,9 @@ class PodManager(KubernetesResourceManager):
                 'memory_limit': (limits or {}).get('memory'),
                 'ephemeral_request': (requests or {}).get('ephemeral-storage'),
                 'ephemeral_limit': (limits or {}).get('ephemeral-storage'),
+                # Not a native container resource; exposed here as a convenience
+                # and derived from the pod's EmptyDir volume.
+                'snapshot_size_limit': snapshot_size_limit,
             }
 
             containers.append(
