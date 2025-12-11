@@ -27,3 +27,14 @@ STATUS_SIDECAR_IMAGE_NAME: str = f'{REPO_NAME}/status_sidecar:latest'
 # Timeout for building the image
 IMAGE_BUILD_TIMEOUT_MINUTES: int = 25
 IMAGE_PUSH_TIMEOUT_MINUTES: int = 25
+
+# Timeout for container readiness check
+CONTAINER_READINESS_TIMEOUT_SECONDS: float = 30.0
+
+# Docker login retry configuration
+DOCKER_LOGIN_MAX_RETRIES: int = 3
+DOCKER_LOGIN_RETRY_DELAY_SECONDS: float = 2.0
+
+# Docker build retry configuration
+DOCKER_BUILD_MAX_RETRIES: int = 3
+DOCKER_BUILD_RETRY_DELAY_SECONDS: float = 5.0

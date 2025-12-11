@@ -2,6 +2,7 @@
 import time
 import gc  # this is because we use the stream function which does not close sockets properly. So we manually collect them using gc.
 import warnings  # this is to capture resource warnings.
+from typing import List
 from src.resources.dataclasses.pod.delete_pod_dataclass import DeletePodDataClass
 from src.resources.dataclasses.pod.get_pod_dataclass import GetPodDataClass
 from src.resources import KubernetesResourceManager
@@ -9,7 +10,7 @@ from src.resources.dataclasses.pod.create_pod_dataclass import CreatePodDataClas
 from src.resources.dataclasses.pod.list_pod_dataclass import ListPodDataClass
 from src.resources.dataclasses.pod.save_pod_dataclass import SavePodDataClass
 from src.common.exceptions import UnsupportedRuntimeEnvironment
-from src.resources.resource_config import IMAGE_PUSH_TIMEOUT_MINUTES, POD_IP_TIMEOUT_SECONDS, POD_UPTIME_TIMEOUT, POD_TERMINATION_TIMEOUT, IMAGE_BUILD_TIMEOUT_MINUTES, STATUS_SIDECAR_IMAGE_NAME, STATUS_SIDECAR_NAME
+from src.resources.resource_config import IMAGE_PUSH_TIMEOUT_MINUTES, POD_IP_TIMEOUT_SECONDS, POD_UPTIME_TIMEOUT, POD_TERMINATION_TIMEOUT, IMAGE_BUILD_TIMEOUT_MINUTES, STATUS_SIDECAR_IMAGE_NAME, STATUS_SIDECAR_NAME, CONTAINER_READINESS_TIMEOUT_SECONDS, DOCKER_LOGIN_MAX_RETRIES, DOCKER_LOGIN_RETRY_DELAY_SECONDS, DOCKER_BUILD_MAX_RETRIES, DOCKER_BUILD_RETRY_DELAY_SECONDS
 from src.resources.resource_config import SNAPSHOT_DIR, SNAPSHOT_FILE_NAME, SNAPSHOT_SIDECAR_NAME, SNAPSHOT_SIDECAR_IMAGE_NAME
 from src.common.config import REPO_NAME, REPO_PASSWORD
 
@@ -265,50 +266,90 @@ class SaveUtility(KubernetesResourceManager):
     @classmethod
     def build_image(cls, data: SavePodDataClass) -> dict:
         '''
-        Build an image from the rootfs directory.
+        Build an image from the rootfs directory with retry logic for reliability.
         Prerequisites:
         - The Dockerfile should exist.
         :params: data: SavePodDataClass
-        :returns: dict: Image name
+        :returns: dict: Image name and build output
         '''
-        try:
-            cls.check_kubernetes_client()
-            image_name: str = f'{data.pod_name}-image:latest'
+        cls.check_kubernetes_client()
+        image_name: str = f'{data.pod_name}-image:latest'
 
-            # build the image with verbose output
-            build_image_cmd: str = (
-                f"docker image build -t {image_name} -f {SNAPSHOT_DIR}/rootfs/Dockerfile {SNAPSHOT_DIR}/rootfs"
-            )
+        # build the image with verbose output
+        build_image_cmd: str = (
+            f"docker image build -t {image_name} -f {SNAPSHOT_DIR}/rootfs/Dockerfile {SNAPSHOT_DIR}/rootfs"
+        )
 
-            print(f"{data.sidecar_pod_name}: Starting image build...")
-            build_output = ExecUtility.run_command_with_stream(data.pod_name, data.namespace_name, data.sidecar_pod_name, build_image_cmd, timeout_minutes=IMAGE_BUILD_TIMEOUT_MINUTES)
-            # Check for success indicators in the output
-            success_indicators = ["Successfully built", "Successfully tagged"]
-            if any(indicator in build_output for indicator in success_indicators):
-                print(f"{data.sidecar_pod_name}: Image built successfully.")
-                # Verify the image actually exists
-                verify_cmd = f"docker images {image_name} --format 'table {{{{.Repository}}}}:{{{{.Tag}}}}'"
-                verify_output = ExecUtility.run_command(data.pod_name, data.namespace_name, data.sidecar_pod_name, verify_cmd)
-                if image_name in verify_output:
-                    print(f"{data.sidecar_pod_name}: Image verified: {image_name}")
-                    return {
-                        'image_name': image_name,
-                        'build_output': build_output
-                    }
+        last_error = None
+
+        # Retry logic with exponential backoff
+        for attempt in range(1, DOCKER_BUILD_MAX_RETRIES + 1):
+            try:
+                print(f"{data.sidecar_pod_name}: Starting image build (attempt {attempt}/{DOCKER_BUILD_MAX_RETRIES})...")
+                build_output = ExecUtility.run_command_with_stream(data.pod_name, data.namespace_name, data.sidecar_pod_name, build_image_cmd, timeout_minutes=IMAGE_BUILD_TIMEOUT_MINUTES)
+
+                # Check for success indicators in the output
+                success_indicators = ["Successfully built", "Successfully tagged"]
+                if any(indicator in build_output for indicator in success_indicators):
+                    print(f"{data.sidecar_pod_name}: Image built successfully.")
+                    # Verify the image actually exists
+                    verify_cmd = f"docker images {image_name} --format 'table {{{{.Repository}}}}:{{{{.Tag}}}}'"
+                    verify_output = ExecUtility.run_command(data.pod_name, data.namespace_name, data.sidecar_pod_name, verify_cmd)
+                    if image_name in verify_output:
+                        print(f"{data.sidecar_pod_name}: Image verified: {image_name}")
+                        return {
+                            'image_name': image_name,
+                            'build_output': build_output
+                        }
+                    else:
+                        last_error = Exception(f"Image {image_name} was not found after build (verification failed)")
+                        if attempt < DOCKER_BUILD_MAX_RETRIES:
+                            delay = DOCKER_BUILD_RETRY_DELAY_SECONDS * (2 ** (attempt - 1))
+                            print(f"{data.sidecar_pod_name}: Image verification failed (attempt {attempt}/{DOCKER_BUILD_MAX_RETRIES}). Retrying in {delay} seconds...")
+                            time.sleep(delay)
+                            continue
+                        raise last_error
                 else:
-                    raise Exception(f"Image {image_name} was not found after build (verification failed)")
-            else:
-                # No success indicators found - build likely failed
-                print(f"{data.sidecar_pod_name}: Build output:\n{build_output}")
-                raise Exception(f"Docker build failed - no success indicators found. See output above for details.")
-        except TimeoutError as te:
-            raise TimeoutError(te) from te
-        except ApiException as ae:
-            raise ApiException(f'Error occured while creating pod: {str(ae)}') from ae
-        except UnsupportedRuntimeEnvironment as ure:
-            raise UnsupportedRuntimeEnvironment(f'Unsupported Run time Environment: {str(ure)}') from ure
-        except Exception as e:
-            raise Exception(f'Docker build error: {str(e)}') from e
+                    # No success indicators found - build likely failed
+                    print(f"{data.sidecar_pod_name}: Build output:\n{build_output}")
+                    last_error = Exception(f"Docker build failed - no success indicators found. See output above for details.")
+                    if attempt < DOCKER_BUILD_MAX_RETRIES:
+                        delay = DOCKER_BUILD_RETRY_DELAY_SECONDS * (2 ** (attempt - 1))
+                        print(f"{data.sidecar_pod_name}: Docker build failed (attempt {attempt}/{DOCKER_BUILD_MAX_RETRIES}). Retrying in {delay} seconds...")
+                        time.sleep(delay)
+                        continue
+                    raise last_error
+            except TimeoutError as te:
+                last_error = te
+                if attempt < DOCKER_BUILD_MAX_RETRIES:
+                    delay = DOCKER_BUILD_RETRY_DELAY_SECONDS * (2 ** (attempt - 1))
+                    print(f"{data.sidecar_pod_name}: Docker build timed out (attempt {attempt}/{DOCKER_BUILD_MAX_RETRIES}). Retrying in {delay} seconds...")
+                    time.sleep(delay)
+                    continue
+                raise TimeoutError(te) from te
+            except ApiException as ae:
+                last_error = ae
+                if attempt < DOCKER_BUILD_MAX_RETRIES:
+                    delay = DOCKER_BUILD_RETRY_DELAY_SECONDS * (2 ** (attempt - 1))
+                    print(f"{data.sidecar_pod_name}: Docker build API error (attempt {attempt}/{DOCKER_BUILD_MAX_RETRIES}). Retrying in {delay} seconds...")
+                    time.sleep(delay)
+                    continue
+                raise ApiException(f'Error occured while building image: {str(ae)}') from ae
+            except UnsupportedRuntimeEnvironment as ure:
+                # Don't retry for unsupported runtime - it won't change
+                raise UnsupportedRuntimeEnvironment(f'Unsupported Run time Environment: {str(ure)}') from ure
+            except Exception as e:
+                last_error = e
+                if attempt < DOCKER_BUILD_MAX_RETRIES:
+                    delay = DOCKER_BUILD_RETRY_DELAY_SECONDS * (2 ** (attempt - 1))
+                    print(f"{data.sidecar_pod_name}: Docker build error (attempt {attempt}/{DOCKER_BUILD_MAX_RETRIES}): {str(e)}. Retrying in {delay} seconds...")
+                    time.sleep(delay)
+                    continue
+                raise Exception(f'Docker build error: {str(e)}') from e
+
+        # If we get here, all retries failed
+        print(f"{data.sidecar_pod_name}: Docker build failed after {DOCKER_BUILD_MAX_RETRIES} attempts.")
+        raise Exception(f'Docker build error: {str(last_error)}') from last_error
 
     @classmethod
     def tag_image(cls, data: SavePodDataClass, image_name: str, repo_name: str) -> None:
@@ -338,33 +379,75 @@ class SaveUtility(KubernetesResourceManager):
     @classmethod
     def docker_login(cls, data: SavePodDataClass, repo_name: str, repo_password: str) -> bool:
         '''
-        Login to the docker registry.
+        Login to the docker registry with retry logic for reliability.
         :params:
             data: SavePodDataClass
             repo_name: str
             repo_password: str
         :returns: bool: True if login succeeded, False otherwise
         '''
-        try:
-            cls.check_kubernetes_client()
-            # login to the docker registry
-            login_cmd: str = (
-                f"docker login -u {repo_name} -p {repo_password}"
-            )
-            docker_login_output: str = ExecUtility.run_command_with_stream(data.pod_name, data.namespace_name, data.sidecar_pod_name, login_cmd)
-            if 'Login Succeeded' in docker_login_output:
-                print(f"{data.sidecar_pod_name}: Docker registry logged in.")
-                return True
-            print(f"{data.sidecar_pod_name}: Docker registry login failed. See output above for details.")
-            return False
-        except TimeoutError as te:
-            raise TimeoutError(te) from te
-        except ApiException as ae:
-            raise ApiException(f'Error occured while creating pod: {str(ae)}') from ae
-        except UnsupportedRuntimeEnvironment as ure:
-            raise UnsupportedRuntimeEnvironment(f'Unsupported Run time Environment: {str(ure)}') from ure
-        except Exception as e:
-            raise Exception(f'Unkown error occured: {str(e)}') from e
+        cls.check_kubernetes_client()
+        login_cmd: str = (
+            f"docker login -u {repo_name} -p {repo_password}"
+        )
+
+        # Retry logic with exponential backoff
+        for attempt in range(1, DOCKER_LOGIN_MAX_RETRIES + 1):
+            try:
+                print(f"{data.sidecar_pod_name}: Attempting docker login (attempt {attempt}/{DOCKER_LOGIN_MAX_RETRIES})...")
+                docker_login_output: str = ExecUtility.run_command_with_stream(
+                    data.pod_name, 
+                    data.namespace_name, 
+                    data.sidecar_pod_name, 
+                    login_cmd
+                )
+                if 'Login Succeeded' in docker_login_output:
+                    print(f"{data.sidecar_pod_name}: Docker registry logged in successfully.")
+                    return True
+                # Check for specific error messages that indicate we should retry
+                retryable_errors = [
+                    'error',
+                    'timeout',
+                    'connection',
+                    'network',
+                    'unauthorized',
+                    'authentication'
+                ]
+                output_lower = docker_login_output.lower()
+                should_retry = any(error in output_lower for error in retryable_errors) and attempt < DOCKER_LOGIN_MAX_RETRIES
+                if should_retry:
+                    delay = DOCKER_LOGIN_RETRY_DELAY_SECONDS * (2 ** (attempt - 1))  # Exponential backoff
+                    print(f"{data.sidecar_pod_name}: Docker login failed (attempt {attempt}/{DOCKER_LOGIN_MAX_RETRIES}). Retrying in {delay} seconds...")
+                    print(f"{data.sidecar_pod_name}: Error output: {docker_login_output[:200]}...")  # Print first 200 chars
+                    time.sleep(delay)
+                    continue
+                else:
+                    print(f"{data.sidecar_pod_name}: Docker registry login failed after {attempt} attempts. Output: {docker_login_output[:500]}")
+                    return False
+            except TimeoutError as te:
+                if attempt < DOCKER_LOGIN_MAX_RETRIES:
+                    delay = DOCKER_LOGIN_RETRY_DELAY_SECONDS * (2 ** (attempt - 1))
+                    print(f"{data.sidecar_pod_name}: Docker login timed out (attempt {attempt}/{DOCKER_LOGIN_MAX_RETRIES}). Retrying in {delay} seconds...")
+                    time.sleep(delay)
+                    continue
+                raise TimeoutError(te) from te
+            except ApiException as ae:
+                if attempt < DOCKER_LOGIN_MAX_RETRIES:
+                    delay = DOCKER_LOGIN_RETRY_DELAY_SECONDS * (2 ** (attempt - 1))
+                    print(f"{data.sidecar_pod_name}: Docker login API error (attempt {attempt}/{DOCKER_LOGIN_MAX_RETRIES}). Retrying in {delay} seconds...")
+                    time.sleep(delay)
+                    continue
+                raise ApiException(f'Error occured during docker login: {str(ae)}') from ae
+            except Exception as e:
+                if attempt < DOCKER_LOGIN_MAX_RETRIES:
+                    delay = DOCKER_LOGIN_RETRY_DELAY_SECONDS * (2 ** (attempt - 1))
+                    print(f"{data.sidecar_pod_name}: Docker login error (attempt {attempt}/{DOCKER_LOGIN_MAX_RETRIES}): {str(e)}. Retrying in {delay} seconds...")
+                    time.sleep(delay)
+                    continue
+                raise Exception(f'Unknown error occured: {str(e)}') from e
+        # If we get here, all retries failed
+        print(f"{data.sidecar_pod_name}: Docker registry login failed after {DOCKER_LOGIN_MAX_RETRIES} attempts.")
+        return False
 
     @classmethod
     def docker_push(cls, data: SavePodDataClass, image_name: str, repo_name: str) -> bool:
@@ -705,6 +788,64 @@ class PodManager(KubernetesResourceManager):
         raise TimeoutError(f"Timeout waiting for pod {pod_name} to reach status {target_status} after {timeout_seconds} seconds")
 
     @classmethod
+    def poll_container_readiness(cls, namespace_name: str, pod_name: str, container_names: List[str], timeout_seconds: float = CONTAINER_READINESS_TIMEOUT_SECONDS) -> None:
+        '''
+        Poll container statuses until all specified containers are running or timeout is reached.
+
+        Args:
+            namespace_name: Name of the namespace
+            pod_name: Name of the pod
+            container_names: List of container names to check
+            timeout_seconds: Maximum time to wait in seconds
+
+        Raises:
+            TimeoutError: If containers don't become running within timeout
+            ApiException: If there's an error getting pod status
+        '''
+        start_time = time.time()
+        while (time.time() - start_time) < timeout_seconds:
+            try:
+                pod = cls.client.read_namespaced_pod(name=pod_name, namespace=namespace_name)
+
+                # Check if pod is running first
+                if pod.status.phase != 'Running':
+                    time.sleep(1)
+                    continue
+
+                # Build a map of container statuses
+                container_statuses = {}
+                if pod.status.container_statuses:
+                    for status in pod.status.container_statuses:
+                        container_statuses[status.name] = status
+
+                # Check if all required containers are running
+                all_running = True
+                for container_name in container_names:
+                    if container_name not in container_statuses:
+                        all_running = False
+                        break
+                    status = container_statuses[container_name]
+                    # Check if container state has 'running' attribute (meaning it's running)
+                    if not hasattr(status, 'state') or not status.state:
+                        all_running = False
+                        break
+                    # Check if state.running exists (container is running)
+                    # V1ContainerState has attributes: running, waiting, terminated
+                    if not hasattr(status.state, 'running') or status.state.running is None:
+                        all_running = False
+                        break
+
+                if all_running:
+                    print(f'All containers in pod {pod_name} are running')
+                    return
+
+            except ApiException as e:
+                if e.status != 404:  # Ignore 404 errors while pod is being created
+                    raise
+            time.sleep(1)
+        raise TimeoutError(f"Timeout waiting for containers {container_names} in pod {pod_name} to be running after {timeout_seconds} seconds")
+
+    @classmethod
     def save(cls, data: SavePodDataClass) -> dict:
         '''
         Save the pod.
@@ -731,6 +872,17 @@ class PodManager(KubernetesResourceManager):
                 raise ApiException(f'Pod {data.pod_name} needs a status sidecar container')
             if data.pod_name not in container_names:
                 raise ApiException(f'Pod {data.pod_name} needs a main container, status sidecar container and snapshot sidecar container')
+
+            # Wait for all containers to be running before attempting to save
+            # This prevents "container not running" errors during save operations
+            required_containers = [data.pod_name, data.sidecar_pod_name]
+            cls.poll_container_readiness(
+                namespace_name=data.namespace_name,
+                pod_name=data.pod_name,
+                container_names=required_containers,
+                timeout_seconds=CONTAINER_READINESS_TIMEOUT_SECONDS
+            )
+
             # save the pod
             return {**SaveUtility.save_image(data), 'pod_name': data.pod_name, 'namespace_name': data.namespace_name}
         except TimeoutError as te:
