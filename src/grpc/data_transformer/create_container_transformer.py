@@ -1,14 +1,14 @@
-from src.grpc.data_transformer import InputDataTransformer, OutputDataTransformer
+from src.grpc.data_transformer import InputDataTransformer, OutputDataTransformer, transform_container_response
 
 # GRPC Data types
 from container_maker_spec.types_pb2 import CreateContainerRequest
 from container_maker_spec.types_pb2 import ContainerResponse
-from container_maker_spec.types_pb2 import PortInformation
 
 # Container Maker Data types
 from src.containers.dataclasses.create_container_dataclass import CreateContainerDataClass
 from src.containers.dataclasses.create_container_dataclass import ExposureLevel
 from src.containers.dataclasses.create_container_dataclass import PublishInformationDataClass
+from src.containers.dataclasses.create_container_dataclass import ResourceRequirementsDataClass
 
 
 class CreateContainerInputDataTransformer(InputDataTransformer):
@@ -30,6 +30,19 @@ class CreateContainerInputDataTransformer(InputDataTransformer):
                 node_port=publish_info.node_port if publish_info.node_port != 0 else None,
             ) for publish_info in input_data.publish_information
         ]
+        # Transform resource requirements if provided
+        resource_requirements = ResourceRequirementsDataClass()
+        if input_data.HasField('resource_requirements'):
+            rr = input_data.resource_requirements
+            resource_requirements = ResourceRequirementsDataClass(
+                cpu_request=rr.cpu_request if rr.cpu_request else '100m',
+                cpu_limit=rr.cpu_limit if rr.cpu_limit else '1',
+                memory_request=rr.memory_request if rr.memory_request else '256Mi',
+                memory_limit=rr.memory_limit if rr.memory_limit else '1Gi',
+                ephemeral_request=rr.ephemeral_request if rr.ephemeral_request else '512Mi',
+                ephemeral_limit=rr.ephemeral_limit if rr.ephemeral_limit else '1Gi',
+                snapshot_size_limit=rr.snapshot_size_limit if rr.snapshot_size_limit else '2Gi',
+            )
         return CreateContainerDataClass(
             image_name=input_data.image_name,
             container_name=input_data.container_name,
@@ -37,20 +50,11 @@ class CreateContainerInputDataTransformer(InputDataTransformer):
             exposure_level=exposure_level,
             publish_information=publish_information,
             environment_variables=input_data.environment_variables,
+            resource_requirements=resource_requirements,
         )
 
 
 class CreateContainerOutputDataTransformer(OutputDataTransformer):
     @classmethod
     def transform(cls, input_data: dict) -> ContainerResponse:
-        return ContainerResponse(
-            container_id=input_data['container_id'],
-            container_name=input_data['container_name'],
-            container_ip=input_data['container_ip'],
-            container_network=input_data['container_network'],
-            ports=[PortInformation(
-                name=port['name'],
-                container_port=port['container_port'],
-                protocol=port['protocol'],
-            ) for port in input_data['container_ports']],
-        )
+        return transform_container_response(input_data)
