@@ -21,6 +21,7 @@ from container_maker_spec.types_pb2 import ExposureLevel as GRPCExposureLevel
 # dataclasses
 from src.containers.dataclasses.create_container_dataclass import CreateContainerDataClass
 from src.resources.dataclasses.namespace.delete_namespace_dataclass import DeleteNamespaceDataClass
+from src.resources.dataclasses.pod.create_pod_dataclass import ResourceRequirementsDataClass
 from src.resources.namespace_manager import NamespaceManager
 from src.resources.resource_config import POD_UPTIME_TIMEOUT
 
@@ -43,7 +44,23 @@ class TestGRPCContainerServicer(TestCase):
         self.environment_variables: dict[str, str] = {
             'SSH_PASSWORD': '12345678',
             'SSH_USERNAME': 'test-user',
+            'CONTAINER_ID': '1234567890',
+            "DB_USERNAME": "testuser",
+            "DB_PASSWORD": "testpassword",
+            "DB_NAME": "testdb",
+            "DB_HOST": "testhost",
+            "DB_PORT": "5432",
+            "DB_DATABASE": "testdatabase",
         }
+        self.resource_requirements: ResourceRequirementsDataClass = ResourceRequirementsDataClass(
+            cpu_request='100m',
+            cpu_limit='1',
+            memory_request='256Mi',
+            memory_limit='1Gi',
+            ephemeral_request='512Mi',
+            ephemeral_limit='1Gi',
+            snapshot_size_limit='2Gi',
+        )
         # create the protobuf message
         self.grpc_create_container_request: CreateContainerRequest = CreateContainerRequest(
             container_name=self.container_name,
@@ -52,6 +69,7 @@ class TestGRPCContainerServicer(TestCase):
             exposure_level=GRPCExposureLevel.EXPOSURE_LEVEL_EXPOSED,
             publish_information=self.publish_information,
             environment_variables=self.environment_variables,
+            resource_requirements=self.resource_requirements.to_dict()
         )
         self.container_maker_servicer: ContainerMakerAPIServicerImpl = ContainerMakerAPIServicerImpl()
 
@@ -79,6 +97,17 @@ class TestGRPCContainerServicer(TestCase):
         self.assertEqual(container_response.ports[1].name, 'https')
         self.assertEqual(container_response.ports[1].container_port, 443)
         self.assertEqual(container_response.ports[1].protocol, 'TCP')
+        # associated resources - for EXPOSED level, should have services which contain pods
+        self.assertGreaterEqual(len(container_response.associated_resources), 1)
+        # find the service resource (ingress contains services)
+        service_resources = [r for r in container_response.associated_resources if r.resource_type == 'service']
+        self.assertEqual(len(service_resources), 1)
+        self.assertEqual(service_resources[0].resource_name, f'{self.container_name}-service')
+        # the service should have associated pods
+        self.assertGreaterEqual(len(service_resources[0].associated_resources), 1)
+        pod_resources = [r for r in service_resources[0].associated_resources if r.resource_type == 'pod']
+        self.assertEqual(len(pod_resources), 1)
+        self.assertEqual(pod_resources[0].resource_name, f'{self.container_name}-pod')
 
         # delete the container
         delete_container_response: DeleteContainerResponse = self.container_maker_servicer.deleteContainer(DeleteContainerRequest(
@@ -115,6 +144,8 @@ class TestGRPCContainerServicer(TestCase):
         self.assertEqual(first_container.ports[1].name, second_container.ports[1].name)
         self.assertEqual(first_container.ports[1].container_port, second_container.ports[1].container_port)
         self.assertEqual(first_container.ports[1].protocol, second_container.ports[1].protocol)
+        # associated resources should also match
+        self.assertEqual(len(first_container.associated_resources), len(second_container.associated_resources))
 
         # delete the container
         delete_container_response: DeleteContainerResponse = self.container_maker_servicer.deleteContainer(DeleteContainerRequest(
@@ -136,6 +167,11 @@ class TestGRPCContainerServicer(TestCase):
         print('Test: test_c_ssh_into_container')
         self.grpc_create_container_request.exposure_level = GRPCExposureLevel.EXPOSURE_LEVEL_CLUSTER_LOCAL
         container_response: ContainerResponse = self.container_maker_servicer.createContainer(self.grpc_create_container_request, None)
+        # verify associated resources are present - CLUSTER_LOCAL is a service, so it has pods directly
+        self.assertGreaterEqual(len(container_response.associated_resources), 1)
+        pod_resources = [r for r in container_response.associated_resources if r.resource_type == 'pod']
+        self.assertEqual(len(pod_resources), 1)
+        self.assertEqual(pod_resources[0].resource_name, f'{self.container_name}-pod')
         print('Waiting for container to be ready')
         time.sleep(10)
         print('Service is ready')
@@ -225,6 +261,17 @@ class TestGRPCContainerServicer(TestCase):
         self.assertEqual(container_response.ports[1].name, 'https')
         self.assertEqual(container_response.ports[1].container_port, 443)
         self.assertEqual(container_response.ports[1].protocol, 'TCP')
+        # associated resources - for EXPOSED level, should have services which contain pods
+        self.assertGreaterEqual(len(container_response.associated_resources), 1)
+        # find the service resource (ingress contains services)
+        service_resources = [r for r in container_response.associated_resources if r.resource_type == 'service']
+        self.assertEqual(len(service_resources), 1)
+        self.assertEqual(service_resources[0].resource_name, f'{self.container_name}-service')
+        # the service should have associated pods
+        self.assertGreaterEqual(len(service_resources[0].associated_resources), 1)
+        pod_resources = [r for r in service_resources[0].associated_resources if r.resource_type == 'pod']
+        self.assertEqual(len(pod_resources), 1)
+        self.assertEqual(pod_resources[0].resource_name, f'{self.container_name}-pod')
 
         # delete the container
         delete_container_response: DeleteContainerResponse = self.container_maker_servicer.deleteContainer(DeleteContainerRequest(
@@ -247,6 +294,12 @@ class TestGRPCContainerServicer(TestCase):
         self.assertEqual(len(init_containers.containers), 0)
         # create the container
         container_response: ContainerResponse = self.container_maker_servicer.createContainer(self.grpc_create_container_request, None)
+        # verify associated resources are present before save - EXPOSED level has services containing pods
+        self.assertGreaterEqual(len(container_response.associated_resources), 1)
+        service_resources = [r for r in container_response.associated_resources if r.resource_type == 'service']
+        self.assertEqual(len(service_resources), 1)
+        pod_resources = [r for r in service_resources[0].associated_resources if r.resource_type == 'pod']
+        self.assertEqual(len(pod_resources), 1)
         # save the container
         save_container_response: SaveContainerResponse = self.container_maker_servicer.saveContainer(SaveContainerRequest(
             container_id=container_response.container_id,

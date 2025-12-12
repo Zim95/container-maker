@@ -12,7 +12,7 @@ from src.resources.dataclasses.service.list_service_dataclass import ListService
 from src.resources import KubernetesResourceManager
 from src.common.exceptions import UnsupportedRuntimeEnvironment
 from src.resources.pod_manager import PodManager
-from src.resources.resource_config import SERVICE_IP_TIMEOUT_SECONDS, SERVICE_TERMINATION_TIMEOUT, SNAPSHOT_SIDECAR_NAME
+from src.resources.resource_config import SERVICE_IP_TIMEOUT_SECONDS, SERVICE_TERMINATION_TIMEOUT, SERVICE_ENDPOINTS_TIMEOUT_SECONDS, SNAPSHOT_SIDECAR_NAME
 
 # third party
 from kubernetes.client.rest import ApiException
@@ -149,6 +149,32 @@ class ServiceManager(KubernetesResourceManager):
         raise TimeoutError(f"Timeout waiting for service {service_name} IP address after {timeout_seconds} seconds")
 
     @classmethod
+    def wait_for_endpoints(cls, namespace_name: str, service_name: str, timeout_seconds: float = SERVICE_ENDPOINTS_TIMEOUT_SECONDS) -> bool:
+        '''
+        Wait for service endpoints to be ready.
+        This ensures the service can route traffic to pods.
+        :params: namespace_name: str
+        :params: service_name: str
+        :params: timeout_seconds: float
+        :returns: bool: True if endpoints are ready
+        '''
+        start_time = time.time()
+        while (time.time() - start_time) < timeout_seconds:
+            try:
+                endpoints = cls.client.read_namespaced_endpoints(name=service_name, namespace=namespace_name)
+                # Check if there's at least one ready address
+                if endpoints.subsets:
+                    for subset in endpoints.subsets:
+                        if subset.addresses and len(subset.addresses) > 0:
+                            print(f'Service {service_name} has {len(subset.addresses)} ready endpoint(s)')
+                            return True
+            except ApiException as e:
+                if e.status != 404:
+                    raise
+            time.sleep(1)
+        raise TimeoutError(f"Timeout waiting for service {service_name} endpoints after {timeout_seconds} seconds")
+
+    @classmethod
     def get_v1_service_ports(cls, data: CreateServiceDataClass) -> list:
         '''
         Get the v1 service ports.
@@ -207,8 +233,10 @@ class ServiceManager(KubernetesResourceManager):
             )
             # create the service
             service: V1Service = cls.client.create_namespaced_service(data.namespace_name, service_manifest)
-            # resolve IP with timeout and return formatted response
+            # resolve IP with timeout
             service_ip: str = cls.get_service_ip(data.namespace_name, data.service_name)
+            # wait for endpoints to be ready so the service can route traffic
+            cls.wait_for_endpoints(data.namespace_name, data.service_name)
             return cls.get_service_response(service, service_ip=service_ip)
         except ApiException as ae:
             raise ApiException(f'Error occurred while creating service: {str(ae)}') from ae

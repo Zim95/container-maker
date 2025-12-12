@@ -51,6 +51,23 @@ def transform_resources(resources_dict: dict) -> ContainerResources:
     )
 
 
+def get_resource_name(resource_dict: dict) -> str:
+    """
+    Extract the resource name from a resource dict based on resource_type.
+    The name key is prefixed with the resource type (e.g., 'service_name', 'pod_name', 'container_name').
+    """
+    resource_type = resource_dict.get('resource_type', '')
+    # Map resource_type to the corresponding name key prefix
+    prefix_map = {
+        'service': 'service_name',
+        'pod': 'pod_name',
+        'pod_container': 'container_name',
+        'ingress': 'ingress_name',
+    }
+    name_key = prefix_map.get(resource_type, 'resource_name')
+    return resource_dict.get(name_key, '')
+
+
 def transform_associated_resource(resource_dict: dict) -> AssociatedResource:
     """Recursively transform associated resource dict to proto message."""
     container_resources = None
@@ -65,7 +82,7 @@ def transform_associated_resource(resource_dict: dict) -> AssociatedResource:
         ]
 
     return AssociatedResource(
-        resource_name=resource_dict.get('resource_name', ''),
+        resource_name=get_resource_name(resource_dict),
         resource_type=resource_dict.get('resource_type', ''),
         container_resources=container_resources,
         associated_resources=nested_resources,
