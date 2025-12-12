@@ -352,6 +352,26 @@ class SaveUtility(KubernetesResourceManager):
         raise Exception(f'Docker build error: {str(last_error)}') from last_error
 
     @classmethod
+    def cleanup_snapshot_files(cls, data: SavePodDataClass) -> bool:
+        '''
+        Clean up snapshot files (tar file and rootfs directory) after image build.
+        :params: data: SavePodDataClass
+        :returns: bool: True if cleanup succeeded, False otherwise
+        '''
+        try:
+            cls.check_kubernetes_client()
+            # Remove the tar file and rootfs directory
+            cleanup_cmd: str = (
+                f"rm -rf {SNAPSHOT_DIR}/{SNAPSHOT_FILE_NAME}.tar.gz {SNAPSHOT_DIR}/rootfs"
+            )
+            ExecUtility.run_command(data.pod_name, data.namespace_name, data.sidecar_pod_name, cleanup_cmd)
+            print(f"{data.sidecar_pod_name}: Snapshot files cleaned up.")
+            return True
+        except Exception as e:
+            print(f"{data.sidecar_pod_name}: Warning - Failed to cleanup snapshot files: {str(e)}")
+            return False
+
+    @classmethod
     def tag_image(cls, data: SavePodDataClass, image_name: str, repo_name: str) -> None:
         '''
         Tag the image.
@@ -552,6 +572,8 @@ class SaveUtility(KubernetesResourceManager):
             cls.create_dockerfile(data)
             # build the image
             image_name: dict = cls.build_image(data)
+            # cleanup snapshot files (tar and rootfs) to free up space
+            cls.cleanup_snapshot_files(data)
             # tag the image
             cls.tag_image(data, image_name['image_name'], repo_name)
             # login to the docker registry
