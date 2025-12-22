@@ -27,8 +27,20 @@ from kubernetes.client import V1Volume
 from kubernetes.client import V1EmptyDirVolumeSource
 from kubernetes.client import V1VolumeMount
 from kubernetes.client import V1ResourceRequirements
+from kubernetes.client import V1ServiceAccount
+from kubernetes.client import RbacAuthorizationV1Api
+from kubernetes.client import V1Role
+from kubernetes.client import V1RoleBinding
+from kubernetes.client import V1PolicyRule
+from kubernetes.client import V1RoleRef
+from kubernetes.client import V1Subject
 from kubernetes.stream import ws_client
 from kubernetes.stream import stream
+
+# Constants for RBAC
+STATUS_SIDECAR_SERVICE_ACCOUNT_NAME = 'status-sidecar-sa'
+STATUS_SIDECAR_ROLE_NAME = 'pod-watcher-role'
+STATUS_SIDECAR_ROLE_BINDING_NAME = 'pod-watcher-binding'
 
 
 class ExecUtility(KubernetesResourceManager):
@@ -917,6 +929,93 @@ class PodManager(KubernetesResourceManager):
             raise Exception(f'Error occured: {str(e)}') from e
 
     @classmethod
+    def _ensure_status_sidecar_rbac(cls, namespace_name: str) -> None:
+        '''
+        Ensure RBAC resources exist for status sidecar pod watching.
+        Creates ServiceAccount, Role, and RoleBinding if they don't exist.
+        This is idempotent - safe to call multiple times.
+
+        :params: namespace_name: str - Namespace to create RBAC resources in
+        '''
+        rbac_api: RbacAuthorizationV1Api = RbacAuthorizationV1Api()
+
+        # Create ServiceAccount if it doesn't exist
+        try:
+            cls.client.read_namespaced_service_account(
+                name=STATUS_SIDECAR_SERVICE_ACCOUNT_NAME,
+                namespace=namespace_name
+            )
+        except ApiException as e:
+            if e.status == 404:
+                service_account = V1ServiceAccount(
+                    metadata=V1ObjectMeta(
+                        name=STATUS_SIDECAR_SERVICE_ACCOUNT_NAME,
+                        namespace=namespace_name
+                    )
+                )
+                cls.client.create_namespaced_service_account(namespace_name, service_account)
+                print(f'Created ServiceAccount {STATUS_SIDECAR_SERVICE_ACCOUNT_NAME} in namespace {namespace_name}')
+            else:
+                raise
+
+        # Create Role if it doesn't exist
+        try:
+            rbac_api.read_namespaced_role(
+                name=STATUS_SIDECAR_ROLE_NAME,
+                namespace=namespace_name
+            )
+        except ApiException as e:
+            if e.status == 404:
+                role = V1Role(
+                    metadata=V1ObjectMeta(
+                        name=STATUS_SIDECAR_ROLE_NAME,
+                        namespace=namespace_name
+                    ),
+                    rules=[
+                        V1PolicyRule(
+                            api_groups=[''],
+                            resources=['pods'],
+                            verbs=['get', 'list', 'watch']
+                        )
+                    ]
+                )
+                rbac_api.create_namespaced_role(namespace_name, role)
+                print(f'Created Role {STATUS_SIDECAR_ROLE_NAME} in namespace {namespace_name}')
+            else:
+                raise
+
+        # Create RoleBinding if it doesn't exist
+        try:
+            rbac_api.read_namespaced_role_binding(
+                name=STATUS_SIDECAR_ROLE_BINDING_NAME,
+                namespace=namespace_name
+            )
+        except ApiException as e:
+            if e.status == 404:
+                role_binding = V1RoleBinding(
+                    metadata=V1ObjectMeta(
+                        name=STATUS_SIDECAR_ROLE_BINDING_NAME,
+                        namespace=namespace_name
+                    ),
+                    subjects=[
+                        V1Subject(
+                            kind='ServiceAccount',
+                            name=STATUS_SIDECAR_SERVICE_ACCOUNT_NAME,
+                            namespace=namespace_name
+                        )
+                    ],
+                    role_ref=V1RoleRef(
+                        api_group='rbac.authorization.k8s.io',
+                        kind='Role',
+                        name=STATUS_SIDECAR_ROLE_NAME
+                    )
+                )
+                rbac_api.create_namespaced_role_binding(namespace_name, role_binding)
+                print(f'Created RoleBinding {STATUS_SIDECAR_ROLE_BINDING_NAME} in namespace {namespace_name}')
+            else:
+                raise
+
+    @classmethod
     def create(cls, data: CreatePodDataClass) -> dict:
         '''
         Create a pod.
@@ -928,6 +1027,9 @@ class PodManager(KubernetesResourceManager):
             p: dict = cls.get(GetPodDataClass(namespace_name=data.namespace_name, pod_name=data.pod_name))
             if p:
                 return p
+
+            # Ensure RBAC resources exist for status sidecar
+            cls._ensure_status_sidecar_rbac(data.namespace_name)
             # create environment variable list
             environment_variables: list[V1EnvVar] = [
                 V1EnvVar(name=name, value=value)
@@ -1028,6 +1130,7 @@ class PodManager(KubernetesResourceManager):
                     }
                 ),
                 spec=V1PodSpec(
+                    service_account_name=STATUS_SIDECAR_SERVICE_ACCOUNT_NAME,
                     security_context=V1SecurityContext(
                         privileged=True
                     ),
