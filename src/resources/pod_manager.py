@@ -33,7 +33,7 @@ from kubernetes.client import V1Role
 from kubernetes.client import V1RoleBinding
 from kubernetes.client import V1PolicyRule
 from kubernetes.client import V1RoleRef
-from kubernetes.client import V1Subject
+from kubernetes.client import RbacV1Subject
 from kubernetes.stream import ws_client
 from kubernetes.stream import stream
 
@@ -998,7 +998,7 @@ class PodManager(KubernetesResourceManager):
                         namespace=namespace_name
                     ),
                     subjects=[
-                        V1Subject(
+                        RbacV1Subject(
                             kind='ServiceAccount',
                             name=STATUS_SIDECAR_SERVICE_ACCOUNT_NAME,
                             namespace=namespace_name

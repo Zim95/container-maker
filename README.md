@@ -6,17 +6,13 @@ API to create, list, delete and update containers in different container environ
 2. To do that visit this repository: `https://github.com/Zim95/grpc_ssl_cert_generator` and follow the steps mentioned in the `README.md` file.
 
 # Run locally
-1. Clone the repository
+1. Clone the repository.
     ```
-    git clone --recurse-submodules https://github.com/Zim95/container-maker
-    ```
-
-2. Incase you miss the step to recurse submodules:
-    ```
-    git submodule update --init --recursive
+    git clone https://github.com/Zim95/container-maker
     ```
 
-3. Install the requirements.
+2. Create the virtual environment.  
+    Make sure that python3.11 is installed in your system.
     ```
     pip install -r requirements.txt
     ```

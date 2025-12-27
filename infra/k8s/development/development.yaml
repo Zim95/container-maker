@@ -6,7 +6,7 @@ metadata:
 rules:
 - apiGroups: ["", "networking.k8s.io"]
   resources: ["namespaces", "pods", "pods/exec", "networkpolicies", "services", "endpoints", "service/status", "endpoints/status", "configmaps", "secrets", "ingresses", "persistentvolumes", "persistentvolumeclaims", "serviceaccounts"]
-  verbs: ["list", "create", "delete", "get"]
+  verbs: ["list", "create", "delete", "get", "watch"]
 - apiGroups: ["rbac.authorization.k8s.io"]
   resources: ["roles", "rolebindings"]
   verbs: ["list", "create", "delete", "get"]
