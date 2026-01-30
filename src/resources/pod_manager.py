@@ -1122,9 +1122,9 @@ class PodManager(KubernetesResourceManager):
             pod_manifest: V1Pod = V1Pod(
                 metadata=V1ObjectMeta(
                     name=data.pod_name,
-                    labels={"app": data.pod_name},
+                    labels={"app": data.container_name},  # Use base name for label (constant)
                     annotations={
-                        "nginx.org/websocket-services": data.pod_name,  # for websockets
+                        "nginx.org/websocket-services": data.container_name,  # Use base name
                         "nginx.ingress.kubernetes.io/proxy-read-timeout": "3600",  # for websockets
                         "nginx.ingress.kubernetes.io/proxy-send-timeout": "3600"  # for websockets
                     }

@@ -335,9 +335,13 @@ class KubernetesContainerManager(ContainerManager):
                 ephemeral_limit=data.resource_requirements.ephemeral_limit,
                 snapshot_size_limit=data.resource_requirements.snapshot_size_limit,
             )
+            # Add timestamp to pod name for uniqueness (prevents conflicts on quick recreate)
+            from src.common.utils import generate_timestamp_suffix
+            timestamp: str = generate_timestamp_suffix()
             pod: dict = PodManager.create(CreatePodDataClass(
                 image_name=data.image_name,
-                pod_name=f'{data.container_name}-pod',
+                pod_name=f'{data.container_name}-pod-{timestamp}',
+                container_name=data.container_name,  # Base name for labels (no timestamp)
                 namespace_name=data.network_name,
                 target_ports={pi.target_port for pi in data.publish_information},
                 environment_variables=data.environment_variables,
@@ -352,7 +356,7 @@ class KubernetesContainerManager(ContainerManager):
                 )
                 service: dict = ServiceManager.create(CreateServiceDataClass(
                     service_name=f'{data.container_name}-service',
-                    pod_name=f'{data.container_name}-pod',
+                    pod_label_selector=data.container_name,  # Use base name (no timestamp) for selector
                     namespace_name=data.network_name,
                     publish_information=[
                         PublishInformationDataClass(

@@ -226,7 +226,7 @@ class ServiceManager(KubernetesResourceManager):
                     name=data.service_name,
                 ),
                 spec=V1ServiceSpec(
-                    selector={"app": data.pod_name},
+                    selector={"app": data.pod_label_selector},  # Use constant label selector
                     ports=cls.get_v1_service_ports(data),
                     type=data.service_type.value if data.service_type else ServiceType.LOAD_BALANCER.value
                 )

@@ -43,7 +43,8 @@ class CreatePodDataClass(CreateResourceDataClass):
     '''
     Create Pod DataClass
     '''
-    pod_name: str  # The name of the pod
+    pod_name: str  # The name of the pod (includes timestamp for uniqueness)
+    container_name: str  # The base container name (used for labels, without timestamp)
     namespace_name: str  # The namespace of the pod
     image_name: str  # The name of the image
     target_ports: Set[int] = field(default_factory=set)  # Set of target ports for the pod

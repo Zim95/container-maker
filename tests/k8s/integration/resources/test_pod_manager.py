@@ -86,9 +86,11 @@ class TestPodManager(TestCase):
             ephemeral_limit='1Gi',
             snapshot_size_limit='2Gi',
         )
+        self.container_name: str = 'test-ssh-container'  # Base name for labels
         self.create_pod_data: CreatePodDataClass = CreatePodDataClass(
             image_name=self.image_name,
             pod_name=self.pod_name,
+            container_name=self.container_name,  # Add container_name for labels
             namespace_name=self.namespace_name,
             target_ports=self.target_ports,
             environment_variables=self.environment_variables,
@@ -114,7 +116,7 @@ class TestPodManager(TestCase):
         self.assertEqual(pod['pod_namespace'], self.namespace_name)
         self.assertEqual(pod['pod_ip'] is not None, True)
         self.assertEqual(len(pod['pod_ports']), 2)  # since we have 2 target ports.
-        self.assertEqual(pod['pod_labels'].get('app'), self.pod_name)  # label is app=pod_name
+        self.assertEqual(pod['pod_labels'].get('app'), self.container_name)  # label is app=container_name (not pod_name!)
         # associated_resources now contains the pod's containers
         self.assertEqual(len(pod['associated_resources']), 3)  # main, snapshot, status containers
 

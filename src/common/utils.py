@@ -40,3 +40,17 @@ def get_runtime_environment() -> str:
     if os.environ.get("KUBERNETES_SERVICE_HOST"):
         return "kubernetes"
     return "unknown"
+
+
+def generate_timestamp_suffix() -> str:
+    """
+    Generate a timestamp suffix for unique resource naming.
+    Used to prevent naming conflicts when recreating pods.
+    
+    Returns:
+        str: Timestamp as string (Unix epoch in seconds)
+    
+    Author: Namah Shrestha
+    """
+    import time
+    return str(int(time.time()))

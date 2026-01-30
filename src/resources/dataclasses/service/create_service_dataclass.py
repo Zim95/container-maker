@@ -27,7 +27,7 @@ class CreateServiceDataClass(CreateResourceDataClass):
     Create Service DataClass
     '''
     service_name: str  # name of the service
-    pod_name: str  # name of the pod
+    pod_label_selector: str  # label selector for pods (constant, without timestamp)
     namespace_name: str  # namespace of the pod
     publish_information: list[PublishInformationDataClass]  # list of publish information
     service_type: Optional[ServiceType] = None  # type of the service. Default is LoadBalancer.

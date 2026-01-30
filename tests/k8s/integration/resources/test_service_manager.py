@@ -29,6 +29,7 @@ class TestServiceManager(TestCase):
         print('Setup: setUp')
         self.image_name: str = 'zim95/ssh_ubuntu:latest'
         self.pod_name: str = POD_NAME
+        self.container_name: str = 'test-ssh-container'  # Base name for labels
         self.namespace_name: str = NAMESPACE_NAME
         self.target_ports: set = {22, 23}
         self.environment_variables: dict = {
@@ -54,6 +55,7 @@ class TestServiceManager(TestCase):
         self.create_pod_data: CreatePodDataClass = CreatePodDataClass(
             image_name=self.image_name,
             pod_name=self.pod_name,
+            container_name=self.container_name,  # Add container_name for labels
             namespace_name=self.namespace_name,
             target_ports=self.target_ports,
             environment_variables=self.environment_variables,
@@ -64,7 +66,7 @@ class TestServiceManager(TestCase):
         self.protocol: str = 'TCP'
         self.create_service_data: CreateServiceDataClass = CreateServiceDataClass(
             service_name=self.service_name,
-            pod_name=self.pod_name,
+            pod_label_selector=self.container_name,  # Use container_name for label selector
             namespace_name=self.namespace_name,
             publish_information=[
                 PublishInformationDataClass(

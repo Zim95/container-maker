@@ -93,7 +93,8 @@ class TestCreateContainer(TestCase):
 
         # validate container properties
         self.assertEqual(len(container['container_id']), 36)
-        self.assertEqual(container['container_name'], f'{self.container_name}-pod')
+        # Pod name now includes timestamp: test-container-pod-1706565890
+        self.assertTrue(container['container_name'].startswith(f'{self.container_name}-pod-'))
         self.assertIsNotNone(container['container_ip'])
         self.assertEqual(container['container_network'], self.namespace_name)
         self.assertEqual(len(container['container_ports']), 1)
