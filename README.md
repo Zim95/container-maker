@@ -11,16 +11,13 @@ API to create, list, delete and update containers in different container environ
     git clone https://github.com/Zim95/container-maker
     ```
 
-2. Create the virtual environment.  
+2. Create the virtual environment and install dependencies with Poetry.  
     Make sure that python3.11 is installed in your system.
     ```
-    pip install -r requirements.txt
+    poetry install --no-root
     ```
 
-4. Run the setup command.
-    ```
-    pip install container-maker-spec/
-    ```
+4. `container-maker-spec` is declared as a Poetry git dependency in `pyproject.toml`, so it is installed automatically by the previous step. There is no local `container-maker-spec/` directory to install.
 
 5. You should now be able to run the application.
     ```
@@ -35,22 +32,19 @@ API to create, list, delete and update containers in different container environ
 # Build and deploy: Debug
 1. Clone the repository, if you haven't already.
     ```
-    git clone --recurse-submodules https://github.com/Zim95/container-maker
+    git clone https://github.com/Zim95/container-maker
     ```
 
-2. Incase you miss the step to recurse submodules:
+2. There are no git submodules here; `container-maker-spec` is pulled in automatically as a Poetry git dependency.
+
+3. Build the development image.
     ```
-    git submodule update --init --recursive
+    make dev_build
     ```
 
-3. Build the debug image by running this script.
+4. Deploy on kubernetes. `make dev_setup` envsubst's `infra/k8s/development/development.yaml` and applies it.
     ```
-    ./scripts/debug-build.sh
-    ```
-
-4. Deploy on kubernetes.
-    ```
-    kubectl apply -f deployement/deployment-debug.yaml
+    make dev_setup
     ```
 
 5. Check for the pods:
@@ -79,12 +73,11 @@ API to create, list, delete and update containers in different container environ
 # Build and deploy:
 1. Clone the repository, if you haven't already.
     ```
-    git clone --recurse-submodules https://github.com/Zim95/container-maker
+    git clone https://github.com/Zim95/container-maker
     ```
 
-2. Incase you miss the step to recurse submodules:
-    ```
-    git submodule update --init --recursive
-    ```
+2. There are no git submodules here; `container-maker-spec` is pulled in automatically as a Poetry git dependency.
 
 3. Build the image
+
+> **Note:** The `prod_*` make targets are currently WIP — they reference missing `scripts/k8s/deployment/*.sh` scripts. Also note that cert-manager must mint the `container-maker-development-service-certs` secret before this pod becomes healthy.
