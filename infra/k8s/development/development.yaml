@@ -10,6 +10,12 @@ rules:
 - apiGroups: ["rbac.authorization.k8s.io"]
   resources: ["roles", "rolebindings"]
   verbs: ["list", "create", "delete", "get"]
+- apiGroups: ["batch"]
+  resources: ["jobs"]
+  verbs: ["list", "create", "delete", "get", "watch"]
+- apiGroups: ["apps"]
+  resources: ["deployments"]
+  verbs: ["list", "create", "delete", "get", "watch", "patch", "update"]
 ---
 apiVersion: v1
 kind: ServiceAccount
@@ -54,6 +60,13 @@ spec:
         imagePullPolicy: Always
         ports:
         - containerPort: 50051  # gRPC default port
+        resources:
+          requests:
+            cpu: "250m"
+            memory: "512Mi"
+          limits:
+            cpu: "1000m"
+            memory: "1Gi"
         securityContext:
           privileged: true
         env:
@@ -88,6 +101,8 @@ spec:
           value: ${REPO_PASSWORD}
         - name: INGRESS_HOST
           value: ${INGRESS_HOST}
+        - name: STORAGE_LAYER
+          value: ${STORAGE_LAYER}
         volumeMounts:
         - name: app-code
           mountPath: /app

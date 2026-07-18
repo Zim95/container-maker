@@ -257,11 +257,77 @@ class TestPodManager(TestCase):
             namespace_name=self.namespace_name,
             pod_name=self.pod_name,
             sidecar_pod_name=SNAPSHOT_SIDECAR_NAME,
+            environment_variables={
+                "CONTAINER_ID": "1234567890",
+                "DB_HOST": "testhost",
+                "DB_PORT": "5432",
+                "DB_USERNAME": "testuser",
+                "DB_PASSWORD": "testpassword",
+                "DB_DATABASE": "testdatabase",
+            },
         )
-        image_data: dict = PodManager.save(save_pod_data)
+        image_data: dict = PodManager.save(
+            save_pod_data,
+            container_id="1234567890",
+            db_credentials={
+                "db_host": "testhost",
+                "db_port": 5432,
+                "db_username": "testuser",
+                "db_password": "testpassword",
+                "db_database": "testdatabase",
+            }
+        )
         self.assertEqual(image_data['image_name'], f'{self.pod_name}-image:latest')
         print('Save pod successful.')
         # delete the pod
+        PodManager.delete(DeletePodDataClass(**{
+            'namespace_name': self.namespace_name,
+            'pod_name': self.pod_name
+        }))
+
+    def test_f_update_pod_image(self) -> None:
+        '''
+        Test updating a pod's image definition.
+        Verifies that the pod image is updated and persists in the cluster.
+        '''
+        print('Test: test_update_pod_image')
+        # Create a pod with initial image
+        PodManager.create(self.create_pod_data)
+        
+        # Wait for pod to be ready
+        time.sleep(5)
+        
+        # Verify initial image
+        pod_list = PodManager.list(ListPodDataClass(**{
+            'namespace_name': self.namespace_name,
+            'pod_name': self.pod_name
+        }))
+        self.assertEqual(len(pod_list), 1)
+        initial_image = pod_list[0]['pod_containers'][0]['container_image']
+        self.assertEqual(initial_image, self.image_name)
+        print(f'Initial image: {initial_image}')
+        
+        # Update pod image
+        new_image = f'{REPO_NAME}/ssh_ubuntu:v2.0'
+        PodManager._update_pod_image(
+            namespace_name=self.namespace_name,
+            pod_name=self.pod_name,
+            image_name=new_image
+        )
+        print(f'Updated pod image to: {new_image}')
+        
+        # Verify updated image persists
+        time.sleep(2)
+        pod_list = PodManager.list(ListPodDataClass(**{
+            'namespace_name': self.namespace_name,
+            'pod_name': self.pod_name
+        }))
+        self.assertEqual(len(pod_list), 1)
+        updated_image = pod_list[0]['pod_containers'][0]['container_image']
+        self.assertEqual(updated_image, new_image)
+        print(f'Verified pod image is now: {updated_image}')
+        
+        # Delete the pod
         PodManager.delete(DeletePodDataClass(**{
             'namespace_name': self.namespace_name,
             'pod_name': self.pod_name

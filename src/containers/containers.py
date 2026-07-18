@@ -278,11 +278,31 @@ class KubernetesContainerManager(ContainerManager):
         if pod:
             # if its a pod, we will only get a dictionary back.
             # To make the output consistent, we will put it in a list.
-            return [PodManager.save(SavePodDataClass(
-                namespace_name=data.network_name,
-                pod_name=pod['pod_name'],
-                sidecar_pod_name=SNAPSHOT_SIDECAR_NAME,
-            ))]
+            db_credentials = {
+                'db_host': data.db_host,
+                'db_port': data.db_port,
+                'db_username': data.db_username,
+                'db_password': data.db_password,
+                'db_database': data.db_database
+            }
+            environment_variables = {
+                "CONTAINER_ID": data.container_id,
+                "DB_HOST": data.db_host,
+                "DB_PORT": str(data.db_port),
+                "DB_USERNAME": data.db_username,
+                "DB_PASSWORD": data.db_password,
+                "DB_DATABASE": data.db_database,
+            }
+            return [PodManager.save(
+                SavePodDataClass(
+                    namespace_name=data.network_name,
+                    pod_name=pod['pod_name'],
+                    sidecar_pod_name=SNAPSHOT_SIDECAR_NAME,  # Deprecated but kept for compatibility
+                    environment_variables=environment_variables,
+                ),
+                container_id=data.container_id,
+                db_credentials=db_credentials
+            )]
         if service:
             return ServiceManager.save_service_pods(GetServiceDataClass(
                 namespace_name=data.network_name,
@@ -355,7 +375,7 @@ class KubernetesContainerManager(ContainerManager):
                     else ServiceType.CLUSTER_IP
                 )
                 service: dict = ServiceManager.create(CreateServiceDataClass(
-                    service_name=f'{data.container_name}-service',
+                    service_name=f'{data.container_name}-service-{timestamp}',
                     pod_label_selector=data.container_name,  # Use base name (no timestamp) for selector
                     namespace_name=data.network_name,
                     publish_information=[
@@ -373,8 +393,8 @@ class KubernetesContainerManager(ContainerManager):
             if data.exposure_level.value > ExposureLevel.CLUSTER_EXTERNAL.value:
                 ingress: dict = IngressManager.create(CreateIngressDataClass(
                     namespace_name=data.network_name,
-                    ingress_name=f'{data.container_name}-ingress',
-                    service_name=f'{data.container_name}-service',
+                    ingress_name=f'{data.container_name}-ingress-{timestamp}',
+                    service_name=f'{data.container_name}-service-{timestamp}',
                     host=config.INGRESS_HOST,
                     service_ports=service['service_ports']
                 ))

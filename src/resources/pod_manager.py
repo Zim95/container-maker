@@ -1,5 +1,9 @@
 # modules
+from abc import ABC, abstractmethod
+import base64
 import time
+import os
+from datetime import datetime
 import gc  # this is because we use the stream function which does not close sockets properly. So we manually collect them using gc.
 import warnings  # this is to capture resource warnings.
 from typing import List
@@ -10,9 +14,10 @@ from src.resources.dataclasses.pod.create_pod_dataclass import CreatePodDataClas
 from src.resources.dataclasses.pod.list_pod_dataclass import ListPodDataClass
 from src.resources.dataclasses.pod.save_pod_dataclass import SavePodDataClass
 from src.common.exceptions import UnsupportedRuntimeEnvironment
-from src.resources.resource_config import IMAGE_PUSH_TIMEOUT_MINUTES, POD_IP_TIMEOUT_SECONDS, POD_UPTIME_TIMEOUT, POD_TERMINATION_TIMEOUT, IMAGE_BUILD_TIMEOUT_MINUTES, STATUS_SIDECAR_IMAGE_NAME, STATUS_SIDECAR_NAME, CONTAINER_READINESS_TIMEOUT_SECONDS, DOCKER_LOGIN_MAX_RETRIES, DOCKER_LOGIN_RETRY_DELAY_SECONDS, DOCKER_BUILD_MAX_RETRIES, DOCKER_BUILD_RETRY_DELAY_SECONDS
-from src.resources.resource_config import SNAPSHOT_DIR, SNAPSHOT_FILE_NAME, SNAPSHOT_SIDECAR_NAME, SNAPSHOT_SIDECAR_IMAGE_NAME
+from src.resources.resource_config import POD_IP_TIMEOUT_SECONDS, POD_UPTIME_TIMEOUT, POD_TERMINATION_TIMEOUT, STATUS_SIDECAR_IMAGE_NAME, STATUS_SIDECAR_NAME, CONTAINER_READINESS_TIMEOUT_SECONDS, IMAGE_BUILD_TIMEOUT_MINUTES
+from src.resources.resource_config import SNAPSHOT_DIR, SNAPSHOT_FILE_NAME
 from src.common.config import REPO_NAME, REPO_PASSWORD
+from browseterm_storage import StorageLayer, get_storage
 
 # third party
 from kubernetes.client.rest import ApiException
@@ -88,7 +93,7 @@ class ExecUtility(KubernetesResourceManager):
             raise Exception(f'Unknown error occured: {str(e)}') from e
 
     @classmethod
-    def run_command_with_stream(cls, pod_name: str, namespace_name: str, container_name: str, command: str, timeout_minutes: int = 10) -> str:
+    def run_command_with_stream(cls, pod_name: str, namespace_name: str, container_name: str, command: str, timeout_minutes: int = IMAGE_BUILD_TIMEOUT_MINUTES) -> str:
         '''
         Exec a command into a pod container with real-time streaming output.
         :params: pod_name: str - Name of the pod
@@ -152,6 +157,160 @@ class ExecUtility(KubernetesResourceManager):
             raise Exception(f'Unknown error occured: {str(e)}') from e
 
 
+class StorageUtility(ABC):
+    '''
+    Abstract base class for storage utilities.
+    Handles tar creation and storage based on the storage layer.
+    '''
+
+    @abstractmethod
+    def build_tar(self, data: SavePodDataClass) -> str:
+        '''
+        Build and store tar file based on storage backend.
+        :params: data: SavePodDataClass
+        :returns: str: Snapshot path (local path or storage key)
+        '''
+        pass
+
+    @classmethod
+    @abstractmethod
+    def get_storage_envs(cls) -> dict:
+        '''
+        Get storage-specific environment variables for the snapshot job.
+        :returns: dict: Environment variables for storage configuration
+        '''
+        pass
+
+
+class LocalPVCStorageUtility(StorageUtility):
+    '''
+    Utility for local PVC storage.
+    Creates tar file directly on shared PVC volume.
+    '''
+
+    @classmethod
+    def get_storage_envs(cls) -> dict:
+        '''
+        Get storage-specific environment variables for local PVC storage.
+        :returns: dict: Environment variables with STORAGE_LAYER and SNAPSHOT_DIR
+        '''
+        return {
+            "STORAGE_LAYER": "local",
+            "SNAPSHOT_DIR": SNAPSHOT_DIR,
+        }
+
+    @classmethod
+    def build_tar(cls, data: SavePodDataClass) -> str:
+        '''
+        Build a tar file of the main container's filesystem on local PVC.
+        :params: data: SavePodDataClass
+        :returns: str: Local snapshot path
+        '''
+        try:
+            KubernetesResourceManager.check_kubernetes_client()
+            
+            # Generate timestamp for snapshot
+            timestamp = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
+            
+            # Get storage instance for LOCAL
+            local_storage_config = {'snapshot_dir': SNAPSHOT_DIR}
+            storage = get_storage(StorageLayer.LOCAL, local_storage_config)
+            
+            # Get snapshot path from storage
+            snapshot_path = storage.snapshot_path(data.namespace_name, data.pod_name, timestamp)
+            
+            # Build the tar file
+            tar_cmd: str = (
+                f"mkdir -p {os.path.dirname(snapshot_path)} && "
+                f"tar --exclude=/proc --exclude=/sys --exclude=/dev --exclude={SNAPSHOT_DIR} "
+                f"-czvf {snapshot_path} /"
+            )
+            ExecUtility.run_command(data.pod_name, data.namespace_name, data.pod_name, tar_cmd)
+            print(f"{data.pod_name}: Filesystem snapshot created in main container at {snapshot_path}.")
+            return snapshot_path
+        except TimeoutError as te:
+            raise TimeoutError(te) from te
+        except ApiException as ae:
+            raise ApiException(f'Error creating local snapshot: {str(ae)}') from ae
+        except Exception as e:
+            raise Exception(f'Error creating local snapshot: {str(e)}') from e
+
+
+class MinioStorageUtility(StorageUtility):
+    '''
+    Utility for MinIO storage.
+    Creates tar file in pod, reads it, and uploads to MinIO.
+    '''
+
+    @classmethod
+    def get_storage_envs(cls) -> dict:
+        '''
+        Get storage-specific environment variables for MinIO storage.
+        :returns: dict: Environment variables with STORAGE_LAYER, MinIO credentials, and SNAPSHOT_DIR
+        '''
+        return {
+            "STORAGE_LAYER": "minio",
+            "SNAPSHOT_DIR": SNAPSHOT_DIR,
+            "MINIO_ENDPOINT": os.getenv('MINIO_ENDPOINT'),
+            "MINIO_ACCESS_KEY": os.getenv('MINIO_ACCESS_KEY'),
+            "MINIO_SECRET_KEY": os.getenv('MINIO_SECRET_KEY'),
+            "MINIO_BUCKET": os.getenv('MINIO_BUCKET'),
+            "MINIO_SECURE": os.getenv('MINIO_SECURE', 'false'),
+        }
+
+    @classmethod
+    def build_tar(cls, data: SavePodDataClass) -> str:
+        '''
+        Build a tar file of the main container's filesystem and upload to MinIO.
+        :params: data: SavePodDataClass
+        :returns: str: MinIO object key
+        '''
+        try:
+            KubernetesResourceManager.check_kubernetes_client()
+            
+            # Generate timestamp for snapshot
+            timestamp = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
+            
+            # Get storage instance for MINIO
+            minio_storage_config = {
+                'minio_endpoint': os.getenv('MINIO_ENDPOINT'),
+                'minio_access_key': os.getenv('MINIO_ACCESS_KEY'),
+                'minio_secret_key': os.getenv('MINIO_SECRET_KEY'),
+                'minio_bucket': os.getenv('MINIO_BUCKET'),
+                'minio_secure': os.getenv('MINIO_SECURE', 'false').lower() == 'true',
+            }
+            storage = get_storage(StorageLayer.MINIO, minio_storage_config)
+            
+            # Get snapshot path from storage
+            snapshot_path = storage.snapshot_path(data.namespace_name, data.pod_name, timestamp)
+            
+            # Create temp local path for tar creation in pod
+            temp_tar_path = f"{SNAPSHOT_DIR}/{data.namespace_name}/{data.pod_name}/fs_snapshot_{timestamp}.tar.gz"
+            
+            # Build the tar file inside pod
+            tar_cmd: str = (
+                f"mkdir -p {os.path.dirname(temp_tar_path)} && "
+                f"tar --exclude=/proc --exclude=/sys --exclude=/dev --exclude={SNAPSHOT_DIR} "
+                f"-czvf {temp_tar_path} /"
+            )
+            ExecUtility.run_command(data.pod_name, data.namespace_name, data.pod_name, tar_cmd)
+            print(f"{data.pod_name}: Filesystem snapshot created in main container.")
+            
+            # Read tar from pod and upload to MinIO
+            b64_cmd: str = f"base64 -w 0 {temp_tar_path}"
+            b64_data: str = ExecUtility.run_command(data.pod_name, data.namespace_name, data.pod_name, b64_cmd)
+            tar_bytes = base64.b64decode(b64_data.encode("utf-8"))
+            storage.write(snapshot_path, tar_bytes)
+            print(f"{data.pod_name}: Snapshot uploaded to MinIO at {snapshot_path}.")
+            return snapshot_path
+        except TimeoutError as te:
+            raise TimeoutError(te) from te
+        except ApiException as ae:
+            raise ApiException(f'Error creating MinIO snapshot: {str(ae)}') from ae
+        except Exception as e:
+            raise Exception(f'Error creating MinIO snapshot: {str(e)}') from e
+
+
 class SaveUtility(KubernetesResourceManager):
     '''
     Utility class for saving a pod.
@@ -159,454 +318,124 @@ class SaveUtility(KubernetesResourceManager):
     This is because we cannot use PodManager because PodManager uses this utility.
     That is a cyclic dependency.
 
-    Therefore, make sure all containers (i.e. main containers and sidecars) are available before calling this utility.
+    Therefore, make sure the main container is available before calling this utility.
     '''
 
     @classmethod
-    def check_shared_volume(cls, data: SavePodDataClass) -> bool:
+    def build_tar(cls, data: SavePodDataClass) -> str:
         '''
-        Check if the sidecar and main containers share a volume.
-        Both containers are in the same pod but we verify they can access the same volume.
+        Build a tar file of the main container's filesystem using appropriate storage utility.
         :params: data: SavePodDataClass
-        :returns: bool: True if volume is shared, False otherwise
+        :returns: str: Snapshot path (local path or storage key)
         '''
         try:
             cls.check_kubernetes_client()
-            # check if the sidecar and main container share a volume
-            check_shared_volume_cmd: str = (
-                f"ls -l {SNAPSHOT_DIR}"
-            )
-            # Both containers are in the same pod (data.pod_name)
-            # but we exec into different containers
-            sidecar_response: str = ExecUtility.run_command(data.pod_name, data.namespace_name, data.sidecar_pod_name, check_shared_volume_cmd)
-            main_response: str = ExecUtility.run_command(data.pod_name, data.namespace_name, data.pod_name, check_shared_volume_cmd)
-            
-            # Check if both commands return the same output
-            # Basically, both containers should have the volume and return: total 0,
-            # If they don't have it, the command returns: No such file or directory
-            if sidecar_response != main_response:
-                return False
-            return True
+
+            # Get storage layer from environment
+            storage_layer_str = os.getenv('STORAGE_LAYER', 'local').lower()
+            storage_layer = StorageLayer(storage_layer_str)
+            storage_utility_map = {
+                StorageLayer.LOCAL: LocalPVCStorageUtility,
+                StorageLayer.MINIO: MinioStorageUtility
+            }
+            storage_utility: StorageUtility = storage_utility_map.get(storage_layer)
+            if storage_utility is None:
+                raise ValueError(f'Unsupported STORAGE_LAYER: {storage_layer}')
+            return storage_utility.build_tar(data)
         except TimeoutError as te:
             raise TimeoutError(te) from te
         except ApiException as ae:
-            raise ApiException(f'Error occured while creating pod: {str(ae)}') from ae
+            raise ApiException(f'Error occured while creating snapshot: {str(ae)}') from ae
         except UnsupportedRuntimeEnvironment as ure:
             raise UnsupportedRuntimeEnvironment(f'Unsupported Run time Environment: {str(ure)}') from ure
         except Exception as e:
-            raise Exception(f'Unkown error occured: {str(e)}') from e
-
-    @classmethod
-    def build_tar(cls, data: SavePodDataClass) -> None:
-        '''
-        Build a tar file of the main container's filesystem.
-        :params: data: SavePodDataClass
-        :returns: None
-        '''
-        try:
-            cls.check_kubernetes_client()
-            # build the tar file
-            tar_cmd: str = (
-                f"tar --exclude=/proc --exclude=/sys --exclude=/dev --exclude={SNAPSHOT_DIR} "
-                f"-czvf {SNAPSHOT_DIR}/{SNAPSHOT_FILE_NAME}.tar.gz /"
-            )
-            ExecUtility.run_command(data.pod_name, data.namespace_name, data.pod_name, tar_cmd)
-            print(f"{data.pod_name}: Filesystem snapshot created in main container.")
-        except TimeoutError as te:
-            raise TimeoutError(te) from te
-        except ApiException as ae:
-            raise ApiException(f'Error occured while creating pod: {str(ae)}') from ae
-        except UnsupportedRuntimeEnvironment as ure:
-            raise UnsupportedRuntimeEnvironment(f'Unsupported Run time Environment: {str(ure)}') from ure
-        except Exception as e:
-            raise Exception(f'Unkown error occured: {str(e)}') from e
-
-    @classmethod
-    def unpack_tar(cls, data: SavePodDataClass) -> None:
-        '''
-        Unpack the tar file. This is done in the sidecar pod.
-        Prerequisites:
-        - A tar file should exist.
-        :params: data: SavePodDataClass
-        :returns: None
-        '''
-        try:
-            cls.check_kubernetes_client()
-            # unpack the tar file
-            untar_cmd: str = (
-                f"mkdir -p {SNAPSHOT_DIR}/rootfs && "
-                f"tar -xzvf {SNAPSHOT_DIR}/{SNAPSHOT_FILE_NAME}.tar.gz -C {SNAPSHOT_DIR}/rootfs"
-            )
-            ExecUtility.run_command(data.pod_name, data.namespace_name, data.sidecar_pod_name, untar_cmd)
-            print(f"{data.sidecar_pod_name}: Filesystem snapshot unpacked into sidecar pod.")
-        except TimeoutError as te:
-            raise TimeoutError(te) from te
-        except ApiException as ae:
-            raise ApiException(f'Error occured while creating pod: {str(ae)}') from ae
-        except UnsupportedRuntimeEnvironment as ure:
-            raise UnsupportedRuntimeEnvironment(f'Unsupported Run time Environment: {str(ure)}') from ure
-        except Exception as e:
-            raise Exception(f'Unkown error occured: {str(e)}') from e
-
-    @classmethod
-    def create_dockerfile(cls, data: SavePodDataClass) -> None:
-        '''
-        Create a Dockerfile in the sidecar pod. This is done in the sidecar pod.
-        Prerequisites:
-        - The rootfs directory should exist.
-        :params: data: SavePodDataClass
-        :returns: None
-        '''
-        try:
-            dockerfile_content: str = (
-                    "FROM scratch\n"
-                    "COPY . /\n"
-                    "ENTRYPOINT [\"/entrypoint.sh\"]\n"
-                )
-            echo_dockerfile_cmd: str = f"echo '{dockerfile_content}' > {SNAPSHOT_DIR}/rootfs/Dockerfile"
-            ExecUtility.run_command(data.pod_name, data.namespace_name, data.sidecar_pod_name, echo_dockerfile_cmd)
-            print(f"{data.sidecar_pod_name}: Dockerfile written.")
-        except TimeoutError as te:
-            raise TimeoutError(te) from te
-        except ApiException as ae:
-            raise ApiException(f'Error occured while creating pod: {str(ae)}') from ae
-        except UnsupportedRuntimeEnvironment as ure:
-            raise UnsupportedRuntimeEnvironment(f'Unsupported Run time Environment: {str(ure)}') from ure
-        except Exception as e:
-            raise Exception(f'Unkown error occured: {str(e)}') from e
-
-    @classmethod
-    def build_image(cls, data: SavePodDataClass) -> dict:
-        '''
-        Build an image from the rootfs directory with retry logic for reliability.
-        Prerequisites:
-        - The Dockerfile should exist.
-        :params: data: SavePodDataClass
-        :returns: dict: Image name and build output
-        '''
-        cls.check_kubernetes_client()
-        image_name: str = f'{data.pod_name}-image:latest'
-
-        # build the image with verbose output
-        build_image_cmd: str = (
-            f"docker image build -t {image_name} -f {SNAPSHOT_DIR}/rootfs/Dockerfile {SNAPSHOT_DIR}/rootfs"
-        )
-
-        last_error = None
-
-        # Retry logic with exponential backoff
-        for attempt in range(1, DOCKER_BUILD_MAX_RETRIES + 1):
-            try:
-                print(f"{data.sidecar_pod_name}: Starting image build (attempt {attempt}/{DOCKER_BUILD_MAX_RETRIES})...")
-                build_output = ExecUtility.run_command_with_stream(data.pod_name, data.namespace_name, data.sidecar_pod_name, build_image_cmd, timeout_minutes=IMAGE_BUILD_TIMEOUT_MINUTES)
-
-                # Check for success indicators in the output
-                success_indicators = ["Successfully built", "Successfully tagged"]
-                if any(indicator in build_output for indicator in success_indicators):
-                    print(f"{data.sidecar_pod_name}: Image built successfully.")
-                    # Verify the image actually exists
-                    verify_cmd = f"docker images {image_name} --format 'table {{{{.Repository}}}}:{{{{.Tag}}}}'"
-                    verify_output = ExecUtility.run_command(data.pod_name, data.namespace_name, data.sidecar_pod_name, verify_cmd)
-                    if image_name in verify_output:
-                        print(f"{data.sidecar_pod_name}: Image verified: {image_name}")
-                        return {
-                            'image_name': image_name,
-                            'build_output': build_output
-                        }
-                    else:
-                        last_error = Exception(f"Image {image_name} was not found after build (verification failed)")
-                        if attempt < DOCKER_BUILD_MAX_RETRIES:
-                            delay = DOCKER_BUILD_RETRY_DELAY_SECONDS * (2 ** (attempt - 1))
-                            print(f"{data.sidecar_pod_name}: Image verification failed (attempt {attempt}/{DOCKER_BUILD_MAX_RETRIES}). Retrying in {delay} seconds...")
-                            time.sleep(delay)
-                            continue
-                        raise last_error
-                else:
-                    # No success indicators found - build likely failed
-                    print(f"{data.sidecar_pod_name}: Build output:\n{build_output}")
-                    last_error = Exception(f"Docker build failed - no success indicators found. See output above for details.")
-                    if attempt < DOCKER_BUILD_MAX_RETRIES:
-                        delay = DOCKER_BUILD_RETRY_DELAY_SECONDS * (2 ** (attempt - 1))
-                        print(f"{data.sidecar_pod_name}: Docker build failed (attempt {attempt}/{DOCKER_BUILD_MAX_RETRIES}). Retrying in {delay} seconds...")
-                        time.sleep(delay)
-                        continue
-                    raise last_error
-            except TimeoutError as te:
-                last_error = te
-                if attempt < DOCKER_BUILD_MAX_RETRIES:
-                    delay = DOCKER_BUILD_RETRY_DELAY_SECONDS * (2 ** (attempt - 1))
-                    print(f"{data.sidecar_pod_name}: Docker build timed out (attempt {attempt}/{DOCKER_BUILD_MAX_RETRIES}). Retrying in {delay} seconds...")
-                    time.sleep(delay)
-                    continue
-                raise TimeoutError(te) from te
-            except ApiException as ae:
-                last_error = ae
-                if attempt < DOCKER_BUILD_MAX_RETRIES:
-                    delay = DOCKER_BUILD_RETRY_DELAY_SECONDS * (2 ** (attempt - 1))
-                    print(f"{data.sidecar_pod_name}: Docker build API error (attempt {attempt}/{DOCKER_BUILD_MAX_RETRIES}). Retrying in {delay} seconds...")
-                    time.sleep(delay)
-                    continue
-                raise ApiException(f'Error occured while building image: {str(ae)}') from ae
-            except UnsupportedRuntimeEnvironment as ure:
-                # Don't retry for unsupported runtime - it won't change
-                raise UnsupportedRuntimeEnvironment(f'Unsupported Run time Environment: {str(ure)}') from ure
-            except Exception as e:
-                last_error = e
-                if attempt < DOCKER_BUILD_MAX_RETRIES:
-                    delay = DOCKER_BUILD_RETRY_DELAY_SECONDS * (2 ** (attempt - 1))
-                    print(f"{data.sidecar_pod_name}: Docker build error (attempt {attempt}/{DOCKER_BUILD_MAX_RETRIES}): {str(e)}. Retrying in {delay} seconds...")
-                    time.sleep(delay)
-                    continue
-                raise Exception(f'Docker build error: {str(e)}') from e
-
-        # If we get here, all retries failed
-        print(f"{data.sidecar_pod_name}: Docker build failed after {DOCKER_BUILD_MAX_RETRIES} attempts.")
-        raise Exception(f'Docker build error: {str(last_error)}') from last_error
-
-    @classmethod
-    def cleanup_snapshot_files(cls, data: SavePodDataClass) -> bool:
-        '''
-        Clean up snapshot files (tar file and rootfs directory) after image build.
-        :params: data: SavePodDataClass
-        :returns: bool: True if cleanup succeeded, False otherwise
-        '''
-        try:
-            cls.check_kubernetes_client()
-            # Remove the tar file and rootfs directory
-            cleanup_cmd: str = (
-                f"rm -rf {SNAPSHOT_DIR}/{SNAPSHOT_FILE_NAME}.tar.gz {SNAPSHOT_DIR}/rootfs"
-            )
-            ExecUtility.run_command(data.pod_name, data.namespace_name, data.sidecar_pod_name, cleanup_cmd)
-            print(f"{data.sidecar_pod_name}: Snapshot files cleaned up.")
-            return True
-        except Exception as e:
-            print(f"{data.sidecar_pod_name}: Warning - Failed to cleanup snapshot files: {str(e)}")
-            return False
-
-    @classmethod
-    def tag_image(cls, data: SavePodDataClass, image_name: str, repo_name: str) -> None:
-        '''
-        Tag the image.
-        :params: data: SavePodDataClass
-        :params: image_name: str
-        :returns: None
-        '''
-        try:
-            cls.check_kubernetes_client()
-            # tag the image
-            tag_image_cmd: str = (
-                f"docker image tag {image_name} {repo_name}/{image_name}"
-            )
-            ExecUtility.run_command(data.pod_name, data.namespace_name, data.sidecar_pod_name, tag_image_cmd)
-            print(f"{data.sidecar_pod_name}: Image tagged.")
-        except TimeoutError as te:
-            raise TimeoutError(te) from te
-        except ApiException as ae:
-            raise ApiException(f'Error occured while creating pod: {str(ae)}') from ae
-        except UnsupportedRuntimeEnvironment as ure:
-            raise UnsupportedRuntimeEnvironment(f'Unsupported Run time Environment: {str(ure)}') from ure
-        except Exception as e:
-            raise Exception(f'Unkown error occured: {str(e)}') from e
-
-    @classmethod
-    def docker_login(cls, data: SavePodDataClass, repo_name: str, repo_password: str) -> bool:
-        '''
-        Login to the docker registry with retry logic for reliability.
-        :params:
-            data: SavePodDataClass
-            repo_name: str
-            repo_password: str
-        :returns: bool: True if login succeeded, False otherwise
-        '''
-        cls.check_kubernetes_client()
-        login_cmd: str = (
-            f"docker login -u {repo_name} -p {repo_password}"
-        )
-
-        # Retry logic with exponential backoff
-        for attempt in range(1, DOCKER_LOGIN_MAX_RETRIES + 1):
-            try:
-                print(f"{data.sidecar_pod_name}: Attempting docker login (attempt {attempt}/{DOCKER_LOGIN_MAX_RETRIES})...")
-                docker_login_output: str = ExecUtility.run_command_with_stream(
-                    data.pod_name, 
-                    data.namespace_name, 
-                    data.sidecar_pod_name, 
-                    login_cmd
-                )
-                if 'Login Succeeded' in docker_login_output:
-                    print(f"{data.sidecar_pod_name}: Docker registry logged in successfully.")
-                    return True
-                # Check for specific error messages that indicate we should retry
-                retryable_errors = [
-                    'error',
-                    'timeout',
-                    'connection',
-                    'network',
-                    'unauthorized',
-                    'authentication'
-                ]
-                output_lower = docker_login_output.lower()
-                should_retry = any(error in output_lower for error in retryable_errors) and attempt < DOCKER_LOGIN_MAX_RETRIES
-                if should_retry:
-                    delay = DOCKER_LOGIN_RETRY_DELAY_SECONDS * (2 ** (attempt - 1))  # Exponential backoff
-                    print(f"{data.sidecar_pod_name}: Docker login failed (attempt {attempt}/{DOCKER_LOGIN_MAX_RETRIES}). Retrying in {delay} seconds...")
-                    print(f"{data.sidecar_pod_name}: Error output: {docker_login_output[:200]}...")  # Print first 200 chars
-                    time.sleep(delay)
-                    continue
-                else:
-                    print(f"{data.sidecar_pod_name}: Docker registry login failed after {attempt} attempts. Output: {docker_login_output[:500]}")
-                    return False
-            except TimeoutError as te:
-                if attempt < DOCKER_LOGIN_MAX_RETRIES:
-                    delay = DOCKER_LOGIN_RETRY_DELAY_SECONDS * (2 ** (attempt - 1))
-                    print(f"{data.sidecar_pod_name}: Docker login timed out (attempt {attempt}/{DOCKER_LOGIN_MAX_RETRIES}). Retrying in {delay} seconds...")
-                    time.sleep(delay)
-                    continue
-                raise TimeoutError(te) from te
-            except ApiException as ae:
-                if attempt < DOCKER_LOGIN_MAX_RETRIES:
-                    delay = DOCKER_LOGIN_RETRY_DELAY_SECONDS * (2 ** (attempt - 1))
-                    print(f"{data.sidecar_pod_name}: Docker login API error (attempt {attempt}/{DOCKER_LOGIN_MAX_RETRIES}). Retrying in {delay} seconds...")
-                    time.sleep(delay)
-                    continue
-                raise ApiException(f'Error occured during docker login: {str(ae)}') from ae
-            except Exception as e:
-                if attempt < DOCKER_LOGIN_MAX_RETRIES:
-                    delay = DOCKER_LOGIN_RETRY_DELAY_SECONDS * (2 ** (attempt - 1))
-                    print(f"{data.sidecar_pod_name}: Docker login error (attempt {attempt}/{DOCKER_LOGIN_MAX_RETRIES}): {str(e)}. Retrying in {delay} seconds...")
-                    time.sleep(delay)
-                    continue
-                raise Exception(f'Unknown error occured: {str(e)}') from e
-        # If we get here, all retries failed
-        print(f"{data.sidecar_pod_name}: Docker registry login failed after {DOCKER_LOGIN_MAX_RETRIES} attempts.")
-        return False
-
-    @classmethod
-    def docker_push(cls, data: SavePodDataClass, image_name: str, repo_name: str) -> bool:
-        '''
-        Push the image to the docker registry.
-        :params:
-            data: SavePodDataClass
-            image_name: str
-            repo_name: str
-        :returns: bool: True if push succeeded, False otherwise
-        '''
-        try:
-            cls.check_kubernetes_client()
-            # push the image
-            push_cmd: str = (
-                f"docker image push {repo_name}/{image_name}"
-            )
-            push_output: str = ExecUtility.run_command_with_stream(data.pod_name, data.namespace_name, data.sidecar_pod_name, push_cmd, timeout_minutes=IMAGE_PUSH_TIMEOUT_MINUTES)
-            if 'Pushed' in push_output:
-                print(f"{data.sidecar_pod_name}: Image pushed to docker registry.")
-                return True
-            print(f"{data.sidecar_pod_name}: Docker registry push failed. See output above for details.")
-            return False
-        except TimeoutError as te:
-            raise TimeoutError(te) from te
-        except ApiException as ae:
-            raise ApiException(f'Error occured while creating pod: {str(ae)}') from ae
-        except UnsupportedRuntimeEnvironment as ure:
-            raise UnsupportedRuntimeEnvironment(f'Unsupported Run time Environment: {str(ure)}') from ure
-        except Exception as e:
-            raise Exception(f'Unkown error occured: {str(e)}') from e
-
-    @classmethod
-    def delete_local_image(cls, data: SavePodDataClass, image_name: str, repo_name: str) -> bool:
-        '''
-        Delete the image from local Docker daemon to free up space.
-        :params:
-            data: SavePodDataClass
-            image_name: str - Local image name (e.g., "test-pod-image:latest")
-            repo_name: str - Repository name (e.g., "zim95")
-        :returns: bool: True if deletion succeeded, False otherwise
-        '''
-        try:
-            cls.check_kubernetes_client()
-            
-            # Create both image references to delete
-            local_image = image_name
-            tagged_image = f"{repo_name}/{image_name}"
-            
-            # Delete both local and tagged versions
-            delete_cmd: str = f"docker rmi {local_image} {tagged_image}"
-            
-            ExecUtility.run_command(data.pod_name, data.namespace_name, data.sidecar_pod_name, delete_cmd)
-            print(f"{data.sidecar_pod_name}: Local images deleted: {local_image}, {tagged_image}")
-            
-            # Verify deletion by checking if images still exist
-            verify_cmd = f"docker images --format '{{{{.Repository}}}}:{{{{.Tag}}}}' | grep -E '^({local_image}|{tagged_image})$'"
-            try:
-                verify_output = ExecUtility.run_command(data.pod_name, data.namespace_name, data.sidecar_pod_name, verify_cmd)
-                if verify_output.strip():
-                    print(f"{data.sidecar_pod_name}: Warning - Some images may not have been deleted: {verify_output}")
-                    return False
-                else:
-                    print(f"{data.sidecar_pod_name}: Image deletion verified.")
-                    return True
-            except Exception:
-                # If grep finds nothing, it returns non-zero exit code, which means deletion was successful
-                print(f"{data.sidecar_pod_name}: Image deletion verified.")
-                return True
-                
-        except TimeoutError as te:
-            raise TimeoutError(te) from te
-        except ApiException as ae:
-            raise ApiException(f'Error occured while deleting local image: {str(ae)}') from ae
-        except UnsupportedRuntimeEnvironment as ure:
-            raise UnsupportedRuntimeEnvironment(f'Unsupported Run time Environment: {str(ure)}') from ure
-        except Exception as e:
-            print(f'Warning: Failed to delete local images {image_name}: {str(e)}')
-            return False
+            raise Exception(f'Error occured while creating snapshot: {str(e)}') from e
 
     @classmethod
     def save_image(cls, data: SavePodDataClass) -> dict:
         '''
-        Save the pod.
-        :params: data: SavePodDataClass
-        :returns: dict: Image name
+        Save the pod by creating a Kubernetes Job to build and push the snapshot.
+        
+        :params:
+            data: SavePodDataClass with environment_variables containing container_id and db credentials
+        :returns: dict: Job information
         '''
         try:
             cls.check_kubernetes_client()
+            from src.resources.job_manager import JobManager
+            
             repo_name: str = REPO_NAME
             repo_password: str = REPO_PASSWORD
             if not repo_name or not repo_password:
                 raise Exception('REPO_NAME or REPO_PASSWORD is not set')
-            # check if the sidecar and main pod share a volume
-            if not cls.check_shared_volume(data):
-                raise ApiException(f'Sidecar and main pod do not share a volume')
-            # build the tar file
-            cls.build_tar(data)
-            # unpack the tar file
-            cls.unpack_tar(data)
-            # create the dockerfile
-            cls.create_dockerfile(data)
-            # build the image
-            image_name: dict = cls.build_image(data)
-            # cleanup snapshot files (tar and rootfs) to free up space
-            cls.cleanup_snapshot_files(data)
-            # tag the image
-            cls.tag_image(data, image_name['image_name'], repo_name)
-            # login to the docker registry
-            is_logged_in: bool = cls.docker_login(data, repo_name, repo_password)
-            if not is_logged_in:
-                raise Exception('Docker registry login failed')
-            # push the image
-            is_pushed: bool = cls.docker_push(data, image_name['image_name'], repo_name)
-            if not is_pushed:
-                raise Exception('Docker registry push failed')
-            # delete local images to free up space
-            is_deleted: bool = cls.delete_local_image(data, image_name['image_name'], repo_name)
-            if not is_deleted:
-                raise Exception('Local images deletion failed')
+            
+            # Step 1: Main container creates the tar file
+            print(f"{data.pod_name}: Creating filesystem snapshot...")
+            snapshot_path = cls.build_tar(data)
+            
+            # Step 2: Create a Kubernetes Job to process the snapshot
+            print(f"{data.pod_name}: Creating snapshot job...")
+            env_vars = data.environment_variables or {}
+
+            # Extract required values from environment_variables
+            container_id = env_vars.get("CONTAINER_ID")
+            db_host = env_vars.get("DB_HOST")
+            db_port = int(env_vars.get("DB_PORT", 5432))
+            db_username = env_vars.get("DB_USERNAME")
+            db_password = env_vars.get("DB_PASSWORD")
+            db_database = env_vars.get("DB_DATABASE")
+
+            # Get storage-specific environment variables from the utility
+            storage_layer_str = os.getenv('STORAGE_LAYER', 'local').lower()
+            storage_layer = StorageLayer(storage_layer_str)
+            storage_utility_map = {
+                StorageLayer.LOCAL: LocalPVCStorageUtility,
+                StorageLayer.MINIO: MinioStorageUtility
+            }
+            storage_utility = storage_utility_map.get(storage_layer)
+            storage_env_vars = storage_utility.get_storage_envs() if storage_utility else {}
+
+            job_info = JobManager.create_snapshot_job(
+                namespace_name=data.namespace_name,
+                pod_name=data.pod_name,
+                container_id=container_id,
+                repo_name=repo_name,
+                repo_password=repo_password,
+                db_host=db_host,
+                db_port=db_port,
+                db_username=db_username,
+                db_password=db_password,
+                db_database=db_database,
+                snapshot_path=snapshot_path,
+                storage_env_vars=storage_env_vars
+            )
+            
+            # Step 3: Wait for job to complete
+            print(f"{data.pod_name}: Waiting for snapshot job to complete...")
+            JobManager.wait_for_job_completion(
+                namespace_name=job_info['namespace_name'],
+                job_name=job_info['job_name']
+            )
+            # Job updates the database directly, so we just return the image name
+            image_name = f'{data.pod_name}-image:latest'            
+            print(f"{data.pod_name}: Snapshot job completed successfully")
+            
+            # Step 4: Update pod image definition to use the saved image
+            print(f"{data.pod_name}: Updating pod image definition to {image_name}...")
+            PodManager._update_pod_image(
+                namespace_name=data.namespace_name,
+                pod_name=data.pod_name,
+                image_name=image_name
+            )
+            print(f"{data.pod_name}: Pod image definition updated. Will use saved image on next restart")
+            
             return {
-                'image_name': image_name['image_name']
+                'image_name': image_name
             }
         except TimeoutError as te:
             raise TimeoutError(te) from te
         except ApiException as ae:
-            raise ApiException(f'Error occured while creating pod: {str(ae)}') from ae
+            raise ApiException(f'Error occured while saving pod: {str(ae)}') from ae
         except UnsupportedRuntimeEnvironment as ure:
             raise UnsupportedRuntimeEnvironment(f'Unsupported Run time Environment: {str(ure)}') from ure
         except Exception as e:
@@ -882,8 +711,10 @@ class PodManager(KubernetesResourceManager):
     @classmethod
     def save(cls, data: SavePodDataClass) -> dict:
         '''
-        Save the pod.
-        :params: data: SavePodDataClass
+        Save the pod by creating a Kubernetes Job for snapshot building.
+        
+        :params:
+            data: SavePodDataClass with environment_variables containing container_id and db credentials
         :returns: dict: Image details
         '''
         try:
@@ -896,28 +727,24 @@ class PodManager(KubernetesResourceManager):
             # Pod has no containers
             if pod['associated_resources'] == []:
                 raise ApiException(f'Pod {data.pod_name} has no containers')
-            # Pod needs a main container and two sidecar containers
-            if len(pod['associated_resources']) != 3:
-                raise ApiException(f'Pod {data.pod_name} needs a main container, sidecar container and status sidecar container')
+            # Pod now has main container and status sidecar (snapshot sidecar removed)
+            if len(pod['associated_resources']) != 2:
+                raise ApiException(f'Pod {data.pod_name} needs a main container and status sidecar container')
             container_names: list[str] = [container['container_name'] for container in pod['associated_resources']]
-            if SNAPSHOT_SIDECAR_NAME not in container_names:
-                raise ApiException(f'Pod {data.pod_name} needs a snapshot sidecar container')
             if STATUS_SIDECAR_NAME not in container_names:
                 raise ApiException(f'Pod {data.pod_name} needs a status sidecar container')
             if data.pod_name not in container_names:
-                raise ApiException(f'Pod {data.pod_name} needs a main container, status sidecar container and snapshot sidecar container')
+                raise ApiException(f'Pod {data.pod_name} needs a main container and status sidecar container')
 
-            # Wait for all containers to be running before attempting to save
-            # This prevents "container not running" errors during save operations
-            required_containers = [data.pod_name, data.sidecar_pod_name]
+            # Wait for main container to be running before attempting to save
             cls.poll_container_readiness(
                 namespace_name=data.namespace_name,
                 pod_name=data.pod_name,
-                container_names=required_containers,
+                container_names=[data.pod_name],
                 timeout_seconds=CONTAINER_READINESS_TIMEOUT_SECONDS
             )
 
-            # save the pod
+            # save the pod using a Job
             return {**SaveUtility.save_image(data), 'pod_name': data.pod_name, 'namespace_name': data.namespace_name}
         except TimeoutError as te:
             raise TimeoutError(te) from te
@@ -927,6 +754,37 @@ class PodManager(KubernetesResourceManager):
             raise UnsupportedRuntimeEnvironment(f'Unsupported Run time Environment: {str(ure)}') from ure
         except Exception as e:
             raise Exception(f'Error occured: {str(e)}') from e
+
+    @classmethod
+    def _update_pod_image(cls, namespace_name: str, pod_name: str, image_name: str) -> None:
+        '''
+        Update a pod's main container image definition in place.
+        The pod will use the new image on its next restart.
+        
+        :params: namespace_name: str - Namespace of the pod
+        :params: pod_name: str - Name of the pod
+        :params: image_name: str - New image to use
+        '''
+        try:
+            # Read the current pod
+            pod = cls.client.read_namespaced_pod(name=pod_name, namespace=namespace_name)
+            
+            # Update the image in the main container only (not the status sidecar)
+            for container in pod.spec.containers:
+                if container.name != STATUS_SIDECAR_NAME:
+                    container.image = image_name
+            
+            # Patch the pod with the new image
+            cls.client.patch_namespaced_pod(
+                name=pod_name,
+                namespace=namespace_name,
+                body=pod
+            )
+            
+            print(f"Updated pod {pod_name} image to {image_name}")
+            
+        except ApiException as e:
+            raise ApiException(f'Error updating pod {pod_name} image: {str(e)}') from e
 
     @classmethod
     def _ensure_status_sidecar_rbac(cls, namespace_name: str) -> None:
@@ -1083,16 +941,7 @@ class PodManager(KubernetesResourceManager):
                     ports=target_ports,
                     env=environment_variables,
                     security_context=V1SecurityContext(
-                        privileged=True
-                    ),
-                    volume_mounts=[snapshot_volume_mount],
-                    resources=resource_requirements_k8s or None,
-                ),
-                V1Container(
-                    name=SNAPSHOT_SIDECAR_NAME,
-                    image=SNAPSHOT_SIDECAR_IMAGE_NAME,
-                    security_context=V1SecurityContext(
-                        privileged=True
+                        privileged=False  # No longer needs privileged access
                     ),
                     volume_mounts=[snapshot_volume_mount],
                     resources=resource_requirements_k8s or None,
@@ -1101,11 +950,12 @@ class PodManager(KubernetesResourceManager):
                     name=STATUS_SIDECAR_NAME,
                     image=STATUS_SIDECAR_IMAGE_NAME,
                     security_context=V1SecurityContext(
-                        privileged=True
+                        privileged=False  # No longer needs privileged access
                     ),
                     env=environment_variables,
                     resources=resource_requirements_k8s or None,
                 )
+                # Snapshot sidecar removed - snapshots now handled by Kubernetes Jobs
             ]
             # Create volumes for the pod, with optional snapshot size limit
             empty_dir_kwargs: dict = {}

@@ -5,14 +5,20 @@ from unittest import TestCase
 from src.containers.containers import KubernetesContainerManager
 from src.containers.dataclasses.create_container_dataclass import CreateContainerDataClass, ExposureLevel
 from src.containers.dataclasses.delete_container_dataclass import DeleteContainerDataClass
+from src.resources.dataclasses.ingress.create_ingress_dataclass import CreateIngressDataClass
+from src.resources.dataclasses.ingress.delete_ingress_dataclass import DeleteIngressDataClass
 from src.resources.dataclasses.ingress.list_ingress_dataclass import ListIngressDataClass
 from src.resources.dataclasses.pod.create_pod_dataclass import ResourceRequirementsDataClass
+from src.resources.dataclasses.pod.delete_pod_dataclass import DeletePodDataClass
 from src.resources.dataclasses.pod.list_pod_dataclass import ListPodDataClass
-from src.resources.dataclasses.service.create_service_dataclass import PublishInformationDataClass
+from src.resources.dataclasses.service.create_service_dataclass import CreateServiceDataClass, PublishInformationDataClass, ServiceType
+from src.resources.dataclasses.service.delete_service_dataclass import DeleteServiceDataClass
 from src.resources.dataclasses.service.list_service_dataclass import ListServiceDataClass
 from src.resources.ingress_manager import IngressManager
 from src.resources.pod_manager import PodManager
 from src.resources.service_manager import ServiceManager
+from src.common.utils import generate_timestamp_suffix
+import src.common.config as config
 
 
 NAMESPACE_NAME: str = 'test-create-container'
@@ -129,7 +135,7 @@ class TestCreateContainer(TestCase):
 
         # validate container properties
         self.assertEqual(len(container['container_id']), 36)
-        self.assertEqual(container['container_name'], f'{self.container_name}-service')
+        self.assertTrue(container['container_name'].startswith(f'{self.container_name}-service-'))
         self.assertIsNotNone(container['container_ip'])
         self.assertEqual(container['container_network'], self.namespace_name)
         self.assertEqual(len(container['container_ports']), 1)
@@ -164,7 +170,7 @@ class TestCreateContainer(TestCase):
 
         # validate container properties
         self.assertEqual(len(container['container_id']), 36)
-        self.assertEqual(container['container_name'], f'{self.container_name}-service')
+        self.assertTrue(container['container_name'].startswith(f'{self.container_name}-service-'))
         self.assertIsNotNone(container['container_ip'])
         self.assertEqual(container['container_network'], self.namespace_name)
         self.assertEqual(len(container['container_ports']), 1)
@@ -199,7 +205,7 @@ class TestCreateContainer(TestCase):
 
         # validate container properties
         self.assertEqual(len(container['container_id']), 36)
-        self.assertEqual(container['container_name'], f'{self.container_name}-ingress')
+        self.assertTrue(container['container_name'].startswith(f'{self.container_name}-ingress-'))
         self.assertIsNotNone(container['container_ip'])
         self.assertEqual(container['container_network'], self.namespace_name)
         self.assertEqual(len(container['container_ports']), 2)
@@ -211,6 +217,123 @@ class TestCreateContainer(TestCase):
         self.assertEqual(container['container_associated_resources'][0]['associated_resources'][0]['associated_resources'][0]['container_resources']['ephemeral_request'], '512Mi')
         self.assertEqual(container['container_associated_resources'][0]['associated_resources'][0]['associated_resources'][0]['container_resources']['ephemeral_limit'], '1Gi')
         self.assertEqual(container['container_associated_resources'][0]['associated_resources'][0]['associated_resources'][0]['container_resources']['snapshot_size_limit'], '2Gi')
+
+    def test_e_recreate_pod_with_same_name(self) -> None:
+        '''
+        Create a pod, delete it, and recreate with the same base name.
+        A new pod with a new timestamp should be created.
+        '''
+        print('Test: test_recreate_pod_with_same_name')
+        self.container_data.exposure_level = ExposureLevel.INTERNAL
+        self.container_data.container_name = f'{self.container_name}-recreate-pod'
+
+        first: dict = KubernetesContainerManager.create(self.container_data)
+        self.container_id = first['container_id']
+        first_pod_name: str = first['container_name']
+
+        PodManager.delete(DeletePodDataClass(
+            namespace_name=self.namespace_name,
+            pod_name=first_pod_name,
+        ))
+
+        second: dict = KubernetesContainerManager.create(self.container_data)
+        self.container_id = second['container_id']
+        second_pod_name: str = second['container_name']
+
+        self.assertNotEqual(first_pod_name, second_pod_name)
+        self.assertTrue(second_pod_name.startswith(f'{self.container_data.container_name}-pod-'))
+
+    def test_f_recreate_service_with_same_pod(self) -> None:
+        '''
+        Create a pod and service, delete the service, then create another service
+        targeting the same pod labels. The new service should be created.
+        '''
+        print('Test: test_recreate_service_with_same_pod')
+        self.container_data.exposure_level = ExposureLevel.CLUSTER_LOCAL
+        self.container_data.container_name = f'{self.container_name}-recreate-service'
+
+        container: dict = KubernetesContainerManager.create(self.container_data)
+        self.container_id = container['container_id']
+        first_service_name: str = container['container_name']
+
+        ServiceManager.delete(DeleteServiceDataClass(
+            namespace_name=self.namespace_name,
+            service_name=first_service_name,
+        ))
+
+        new_service_name: str = f'{self.container_data.container_name}-service-{generate_timestamp_suffix()}'
+        recreated: dict = ServiceManager.create(CreateServiceDataClass(
+            service_name=new_service_name,
+            pod_label_selector=self.container_data.container_name,
+            namespace_name=self.namespace_name,
+            publish_information=self.publish_information,
+            service_type=ServiceType.CLUSTER_IP,
+        ))
+
+        self.assertEqual(recreated['service_name'], new_service_name)
+        self.assertNotEqual(first_service_name, new_service_name)
+
+        ServiceManager.delete(DeleteServiceDataClass(
+            namespace_name=self.namespace_name,
+            service_name=new_service_name,
+        ))
+        pods: list[dict] = PodManager.list(ListPodDataClass(namespace_name=self.namespace_name))
+        for pod in pods:
+            PodManager.delete(DeletePodDataClass(
+                namespace_name=self.namespace_name,
+                pod_name=pod['pod_name'],
+            ))
+        self.container_id = None
+
+    def test_g_recreate_ingress_with_same_service(self) -> None:
+        '''
+        Create an ingress, delete it, and recreate a new ingress pointing to the same service.
+        The new ingress should be created with a new name.
+        '''
+        print('Test: test_recreate_ingress_with_same_service')
+        self.container_data.exposure_level = ExposureLevel.EXPOSED
+        self.container_data.container_name = f'{self.container_name}-recreate-ingress'
+
+        container: dict = KubernetesContainerManager.create(self.container_data)
+        self.container_id = container['container_id']
+        first_ingress_name: str = container['container_name']
+
+        IngressManager.delete(DeleteIngressDataClass(
+            namespace_name=self.namespace_name,
+            ingress_name=first_ingress_name,
+        ))
+
+        services: list[dict] = ServiceManager.list(ListServiceDataClass(namespace_name=self.namespace_name))
+        self.assertEqual(len(services), 1)
+        service: dict = services[0]
+
+        new_ingress_name: str = f'{self.container_data.container_name}-ingress-{generate_timestamp_suffix()}'
+        recreated: dict = IngressManager.create(CreateIngressDataClass(
+            namespace_name=self.namespace_name,
+            ingress_name=new_ingress_name,
+            service_name=service['service_name'],
+            host=config.INGRESS_HOST,
+            service_ports=service['service_ports'],
+        ))
+
+        self.assertEqual(recreated['ingress_name'], new_ingress_name)
+        self.assertNotEqual(first_ingress_name, new_ingress_name)
+
+        IngressManager.delete(DeleteIngressDataClass(
+            namespace_name=self.namespace_name,
+            ingress_name=new_ingress_name,
+        ))
+        ServiceManager.delete(DeleteServiceDataClass(
+            namespace_name=self.namespace_name,
+            service_name=service['service_name'],
+        ))
+        pods: list[dict] = PodManager.list(ListPodDataClass(namespace_name=self.namespace_name))
+        for pod in pods:
+            PodManager.delete(DeletePodDataClass(
+                namespace_name=self.namespace_name,
+                pod_name=pod['pod_name'],
+            ))
+        self.container_id = None
 
     def tearDown(self) -> None:
         '''

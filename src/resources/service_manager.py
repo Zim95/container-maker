@@ -283,6 +283,7 @@ class ServiceManager(KubernetesResourceManager):
                         namespace_name=data.namespace_name,
                         pod_name=pod['pod_name'],
                         sidecar_pod_name=SNAPSHOT_SIDECAR_NAME,
+                        environment_variables={},
                     )
                 )
                 futures.append(future)

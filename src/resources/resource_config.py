@@ -1,4 +1,5 @@
 # modules
+import os
 from src.common.config import REPO_NAME
 
 # Timeout for getting IP addresses
@@ -18,8 +19,20 @@ SERVICE_ENDPOINTS_TIMEOUT_SECONDS: float = 30.0
 # Saving the Pod
 SNAPSHOT_DIR: str = '/mnt/snapshot'
 SNAPSHOT_FILE_NAME: str = 'full_fs_snapshot'
-SNAPSHOT_SIDECAR_NAME: str = 'snapshot-sidecar'
-SNAPSHOT_SIDECAR_IMAGE_NAME: str = f'{REPO_NAME}/snapshot_sidecar:latest'
+SNAPSHOT_PVC_NAME: str = os.getenv('SNAPSHOT_PVC_NAME', 'snapshot-pvc')
+SNAPSHOT_PVC_SIZE: str = '20Gi'  # Storage size for snapshot PVC
+
+# Deprecated configs.
+SNAPSHOT_SIDECAR_NAME: str = 'snapshot-sidecar'  # Deprecated - kept for backward compatibility
+SNAPSHOT_SIDECAR_IMAGE_NAME: str = f'{REPO_NAME}/snapshot_sidecar:latest'  # Deprecated
+
+
+# Snapshot Job (replaces snapshot sidecar)
+SNAPSHOT_JOB_IMAGE_NAME: str = f'{REPO_NAME}/snapshot_job:latest'
+SNAPSHOT_JOB_TIMEOUT_SECONDS: float = 1800.0  # 30 minutes for job completion
+SNAPSHOT_JOB_SERVICE_ACCOUNT: str = 'snapshot-job-sa'
+SNAPSHOT_JOB_ROLE_NAME: str = 'snapshot-job-role'
+SNAPSHOT_JOB_ROLE_BINDING_NAME: str = 'snapshot-job-binding'
 
 # Pod status
 STATUS_SIDECAR_NAME: str = 'status-sidecar'

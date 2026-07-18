@@ -41,6 +41,7 @@ NOTE: This setup is a little different on windows. Please use WSL in windows.
     INGRESS_HOST=<your-domain-name>
     NAMESPACE=<your-namespace>
     HOST_DIR=<absolute-path-to-your-local-working-directory>
+    STORAGE_LAYER=<local-or-minio>
     ```
     This is what the variables mean:
     1. REPO_NAME = Usually your docker registry name. Where you store your images.  
@@ -49,6 +50,7 @@ NOTE: This setup is a little different on windows. Please use WSL in windows.
     4. INGRESS_HOST = Your domain name. For example: example.com. You can put, localhost if you do not have a domain name yet.  
     5. NAMESPACE = The namespace of the application.  
     6. HOST_DIR = The directory where the code is located in your machine.  
+    7. STORAGE_LAYER = Storage backend to use: `local` (PVC) or `minio` (object storage). Default: `local`  
 
 6. Run the development build script, if not already done.
     ```
