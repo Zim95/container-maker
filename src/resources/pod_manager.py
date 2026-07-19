@@ -156,6 +156,80 @@ class ExecUtility(KubernetesResourceManager):
         except Exception as e:
             raise Exception(f'Unknown error occured: {str(e)}') from e
 
+    @classmethod
+    def stream_command_to_file(cls, pod_name: str, namespace_name: str, container_name: str, command: str, local_path: str, timeout_minutes: int = IMAGE_BUILD_TIMEOUT_MINUTES) -> int:
+        '''
+        Exec a command whose stdout is base64 text (e.g. `base64 -w 0 <file>`), decode it
+        incrementally and write the raw bytes to local_path. Memory stays bounded (only a small
+        base64 carry buffer is held at a time) so we can pull a large filesystem snapshot out of
+        a pod without buffering the whole thing in RAM (which OOM-killed container-maker before).
+        :params: pod_name: str - Name of the pod
+        :params: namespace_name: str - Name of the namespace
+        :params: container_name: str - Name of the container within the pod
+        :params: command: str - Command to execute (its stdout must be base64)
+        :params: local_path: str - Local file to write the decoded bytes to
+        :params: timeout_minutes: int - Maximum time to wait for command completion
+        :returns: int - number of bytes written to local_path
+        '''
+        try:
+            cls.check_kubernetes_client()
+            bytes_written: int = 0
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore", category=ResourceWarning, message=".*unclosed.*ssl.SSLSocket.*")
+                stream_client: ws_client.WSClient = stream(
+                    cls.client.connect_get_namespaced_pod_exec,
+                    pod_name,
+                    namespace_name,
+                    container=container_name,
+                    command=["/bin/bash", "-c", command],
+                    stderr=True,
+                    stdin=False,
+                    stdout=True,
+                    tty=False,
+                    _preload_content=False
+                )
+                try:
+                    start_time: float = time.time()
+                    timeout_seconds: float = timeout_minutes * 60
+                    b64_carry: str = ""      # leftover base64 chars; only decode on 4-char boundaries
+                    stderr_output: str = ""
+                    with open(local_path, "wb") as f:
+                        while stream_client.is_open():
+                            if time.time() - start_time > timeout_seconds:
+                                raise TimeoutError(f"Command timed out after {timeout_minutes} minutes")
+                            stream_client.update(timeout=5)
+                            if stream_client.peek_stdout():
+                                # strip all whitespace so the 4-char boundary math stays correct
+                                b64_carry += "".join(stream_client.read_stdout().split())
+                                n: int = (len(b64_carry) // 4) * 4
+                                if n:
+                                    chunk, b64_carry = b64_carry[:n], b64_carry[n:]
+                                    decoded: bytes = base64.b64decode(chunk)
+                                    f.write(decoded)
+                                    bytes_written += len(decoded)
+                            if stream_client.peek_stderr():
+                                stderr_output += stream_client.read_stderr()
+                        # flush any remaining base64 (a valid stream ends on a 4-char boundary)
+                        if b64_carry:
+                            decoded = base64.b64decode(b64_carry)
+                            f.write(decoded)
+                            bytes_written += len(decoded)
+                    if stderr_output.strip():
+                        print(f"[{container_name}] {stderr_output.strip()}")
+                    return bytes_written
+                finally:
+                    try:
+                        stream_client.close()
+                    except Exception:
+                        pass
+                    gc.collect()
+        except TimeoutError as te:
+            raise TimeoutError(te) from te
+        except ApiException as ae:
+            raise ApiException(f'Error occured while streaming command output in pod: {str(ae)}') from ae
+        except Exception as e:
+            raise Exception(f'Unknown error occured: {str(e)}') from e
+
 
 class StorageUtility(ABC):
     '''
@@ -295,13 +369,26 @@ class MinioStorageUtility(StorageUtility):
             )
             ExecUtility.run_command(data.pod_name, data.namespace_name, data.pod_name, tar_cmd)
             print(f"{data.pod_name}: Filesystem snapshot created in main container.")
-            
-            # Read tar from pod and upload to MinIO
-            b64_cmd: str = f"base64 -w 0 {temp_tar_path}"
-            b64_data: str = ExecUtility.run_command(data.pod_name, data.namespace_name, data.pod_name, b64_cmd)
-            tar_bytes = base64.b64decode(b64_data.encode("utf-8"))
-            storage.write(snapshot_path, tar_bytes)
-            print(f"{data.pod_name}: Snapshot uploaded to MinIO at {snapshot_path}.")
+
+            # Stream the tar out of the pod to a local temp file (base64 over exec, decoded
+            # incrementally) so we never hold the whole filesystem in memory, then upload the
+            # file to MinIO with fput_object (multipart, streams from disk). This avoids the OOM
+            # that reading the entire base64 tar into a Python str caused before.
+            local_tmp: str = f"/tmp/{data.namespace_name}_{data.pod_name}_{timestamp}.tar.gz"
+            try:
+                b64_cmd: str = f"base64 -w 0 {temp_tar_path}"
+                ExecUtility.stream_command_to_file(data.pod_name, data.namespace_name, data.pod_name, b64_cmd, local_tmp)
+                # fput_object streams from disk in parts (no full in-memory load, unlike write()).
+                storage.client.fput_object(storage.bucket, snapshot_path, local_tmp)
+                print(f"{data.pod_name}: Snapshot uploaded to MinIO at {snapshot_path}.")
+            finally:
+                if os.path.exists(local_tmp):
+                    os.remove(local_tmp)
+                # best-effort cleanup of the in-pod tar so repeated saves don't fill the pod
+                try:
+                    ExecUtility.run_command(data.pod_name, data.namespace_name, data.pod_name, f"rm -f {temp_tar_path}")
+                except Exception:
+                    pass
             return snapshot_path
         except TimeoutError as te:
             raise TimeoutError(te) from te
