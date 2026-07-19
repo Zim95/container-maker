@@ -16,6 +16,7 @@ click = "^8.1.8"
 jupyter = "^1.1.1"
 container-maker-spec = {git = "https://github.com/Zim95/container-maker-spec.git", rev = "main"}
 browseterm-storage = {git = "https://github.com/Zim95/browseterm-storage.git", rev = "main"}
+browseterm-db = {git = "https://github.com/Zim95/browseterm-db.git", rev = "main"}
 
 
 [build-system]

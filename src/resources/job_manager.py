@@ -200,10 +200,10 @@ class JobManager(KubernetesResourceManager):
             
             job_name = f"{pod_name}-snapshot-job"
             
-            # storage env vars
-            storage_env_vars = [V1EnvVar(name=key, value=str(value)) for key, value in storage_env_vars.items() if value is not None]
+            # storage-specific env vars (STORAGE_LAYER, MINIO_*, SNAPSHOT_DIR) -> list of V1EnvVar
+            storage_env_list = [V1EnvVar(name=key, value=str(value)) for key, value in storage_env_vars.items() if value is not None]
 
-            # Job container with privileged access
+            # Job container with privileged access (needs a Docker daemon to build/push)
             job_env = {
                 "CONTAINER_ID": container_id,
                 "POD_NAME": pod_name,
@@ -217,10 +217,11 @@ class JobManager(KubernetesResourceManager):
                 "DB_DATABASE": db_database,
                 "SNAPSHOT_PATH": snapshot_path,
                 "SNAPSHOT_DIR": SNAPSHOT_DIR,
-                "STORAGE_ENV_VARS": storage_env_vars
             }
 
             job_env_vars = [V1EnvVar(name=key, value=str(value)) for key, value in job_env.items() if value is not None]
+            # Merge the storage env vars in as individual vars (not a stringified list).
+            job_env_vars.extend(storage_env_list)
 
             storage_layer = os.getenv("STORAGE_LAYER", "local").lower()
 

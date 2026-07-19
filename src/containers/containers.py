@@ -6,7 +6,11 @@ There is no customizability.
 '''
 
 # builtins
+import os
 from collections import defaultdict
+
+from browseterm_db.operations.all_operations import ContainerOps
+from browseterm_db.common.config import DBConfig
 
 # modules
 import src.common.config as config
@@ -267,31 +271,45 @@ class KubernetesContainerManager(ContainerManager):
         namespace: dict = NamespaceManager.get(GetNamespaceDataClass(namespace_name=data.network_name))
         if not namespace:
             return []
-        pod: dict | None = KubernetesContainerHelper.check_pod(namespace_name=data.network_name, container_id=data.container_id)
-        service: dict | None = KubernetesContainerHelper.check_service(namespace_name=data.network_name, container_id=data.container_id)
-        ingress: dict | None = KubernetesContainerHelper.check_ingress(namespace_name=data.network_name, container_id=data.container_id)
+
+        # The gRPC request's container_id is the DATABASE id. Kubernetes resources are looked up by
+        # their k8s id, while the snapshot Job updates the DB row by DB id. So resolve the container's
+        # kubernetes_id from the DB (using container-maker's own DB_* env), use it for the k8s lookups,
+        # and keep the DB id (data.container_id) for the Job's CONTAINER_ID.
+        db_config: DBConfig = DBConfig(
+            host=os.getenv("DB_HOST"),
+            port=int(os.getenv("DB_PORT", "5432")),
+            username=os.getenv("DB_USERNAME"),
+            password=os.getenv("DB_PASSWORD"),
+            database=os.getenv("DB_DATABASE"),
+        )
+        container_row = ContainerOps(db_config).find_one(filters={"id": data.container_id})
+        if not container_row.data:
+            raise Exception(f'Container not found in database: id={data.container_id}')
+        kubernetes_id: str = container_row.data.get("kubernetes_id")
+        if not kubernetes_id:
+            raise Exception(f'Container {data.container_id} has no kubernetes_id yet (not running in k8s?)')
+
+        pod: dict | None = KubernetesContainerHelper.check_pod(namespace_name=data.network_name, container_id=kubernetes_id)
+        service: dict | None = KubernetesContainerHelper.check_service(namespace_name=data.network_name, container_id=kubernetes_id)
+        ingress: dict | None = KubernetesContainerHelper.check_ingress(namespace_name=data.network_name, container_id=kubernetes_id)
         final_container: dict = pod or service or ingress or {}
 
         if not final_container:
-            raise Exception(f'Cannot find, container_id={data.container_id} in namespace={data.network_name}')
+            raise Exception(f'Cannot find kubernetes_id={kubernetes_id} (db id={data.container_id}) in namespace={data.network_name}')
 
         if pod:
             # if its a pod, we will only get a dictionary back.
             # To make the output consistent, we will put it in a list.
-            db_credentials = {
-                'db_host': data.db_host,
-                'db_port': data.db_port,
-                'db_username': data.db_username,
-                'db_password': data.db_password,
-                'db_database': data.db_database
-            }
+            # DB credentials for the snapshot Job come from container-maker's OWN environment
+            # (not the gRPC request), and are forwarded into the Job so it can update save status.
             environment_variables = {
                 "CONTAINER_ID": data.container_id,
-                "DB_HOST": data.db_host,
-                "DB_PORT": str(data.db_port),
-                "DB_USERNAME": data.db_username,
-                "DB_PASSWORD": data.db_password,
-                "DB_DATABASE": data.db_database,
+                "DB_HOST": os.getenv("DB_HOST"),
+                "DB_PORT": os.getenv("DB_PORT", "5432"),
+                "DB_USERNAME": os.getenv("DB_USERNAME"),
+                "DB_PASSWORD": os.getenv("DB_PASSWORD"),
+                "DB_DATABASE": os.getenv("DB_DATABASE"),
             }
             return [PodManager.save(
                 SavePodDataClass(
@@ -299,9 +317,7 @@ class KubernetesContainerManager(ContainerManager):
                     pod_name=pod['pod_name'],
                     sidecar_pod_name=SNAPSHOT_SIDECAR_NAME,  # Deprecated but kept for compatibility
                     environment_variables=environment_variables,
-                ),
-                container_id=data.container_id,
-                db_credentials=db_credentials
+                )
             )]
         if service:
             return ServiceManager.save_service_pods(GetServiceDataClass(
