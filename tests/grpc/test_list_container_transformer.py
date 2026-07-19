@@ -31,7 +31,7 @@ class TestListContainerTransformer(TestCase):
         ]
         self.container_associated_resources: list[dict] = [
             {
-                'resource_name': 'test-container-pod',
+                'pod_name': 'test-container-pod',
                 'resource_type': 'pod',
                 'container_resources': {
                     'cpu_request': '100m',
@@ -87,7 +87,7 @@ class TestListContainerTransformer(TestCase):
         self.assertEqual(output_data.containers[0].ports[1].protocol, self.container_ports[1]['protocol'])
         # associated resources
         self.assertEqual(len(output_data.containers[0].associated_resources), 1)
-        self.assertEqual(output_data.containers[0].associated_resources[0].resource_name, self.container_associated_resources[0]['resource_name'])
+        self.assertEqual(output_data.containers[0].associated_resources[0].resource_name, self.container_associated_resources[0]['pod_name'])
         self.assertEqual(output_data.containers[0].associated_resources[0].resource_type, self.container_associated_resources[0]['resource_type'])
         self.assertEqual(output_data.containers[0].associated_resources[0].container_resources.cpu_request, self.container_associated_resources[0]['container_resources']['cpu_request'])
         self.assertEqual(output_data.containers[0].associated_resources[0].container_resources.cpu_limit, self.container_associated_resources[0]['container_resources']['cpu_limit'])
