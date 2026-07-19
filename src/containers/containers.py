@@ -90,6 +90,68 @@ class KubernetesContainerHelper:
         return None
 
     @classmethod
+    def _sanitize_name(cls, name: str) -> str:
+        '''
+        Mirror browseterm-server's sanitize_container_name so we can match a pod's `app` label:
+        lowercase, spaces/underscores -> hyphens, drop anything that isn't [a-z0-9-].
+        '''
+        import re
+        lowered: str = (name or '').strip().lower()
+        hyphenated: str = lowered.replace(' ', '-').replace('_', '-')
+        return re.sub(r'[^a-z0-9-]', '', hyphenated)
+
+    @classmethod
+    def _stored_pod_name(cls, container_row_data: dict) -> str | None:
+        '''
+        Pull the exact pod name recorded for this container in its DB row
+        (associated_resources). This name is unique per pod (it carries a timestamp suffix),
+        so it disambiguates even between two containers that share the same base name.
+        '''
+        import json
+        resources = container_row_data.get('associated_resources') or []
+        if isinstance(resources, str):
+            try:
+                resources = json.loads(resources)
+            except Exception:
+                resources = []
+        for resource in resources:
+            if isinstance(resource, dict) and resource.get('resource_type') == 'pod' and resource.get('resource_name'):
+                return resource['resource_name']
+        return None
+
+    @classmethod
+    def find_container_pod(cls, namespace_name: str, container_row_data: dict) -> dict | None:
+        '''
+        Resolve the live pod for a container WITHOUT trusting the historically unreliable
+        kubernetes_id (pod uid). We anchor on the exact pod name stored in this container's own
+        DB row (unique per pod). Only if that pod no longer exists (e.g. it was recreated) do we
+        fall back to the stable `app` label -- and if the label matches more than one pod we
+        refuse to guess rather than snapshot the wrong container.
+        '''
+        pods: list = PodManager.list(ListPodDataClass(**{'namespace_name': namespace_name}))
+
+        # Primary: exact, unique pod name recorded for this container.
+        stored_pod_name: str | None = cls._stored_pod_name(container_row_data)
+        if stored_pod_name:
+            for pod in pods:
+                if pod.get('pod_name') == stored_pod_name:
+                    return pod
+
+        # Fallback: stable `app` label (survives pod recreation, but not unique across
+        # same-named containers -- so only use it when it maps to exactly one pod).
+        sanitized: str = cls._sanitize_name(container_row_data.get('name'))
+        label_matches: list = [p for p in pods if (p.get('pod_labels') or {}).get('app') == sanitized]
+        if len(label_matches) == 1:
+            return label_matches[0]
+        if len(label_matches) > 1:
+            raise Exception(
+                f"Cannot uniquely resolve the pod for container id={container_row_data.get('id')} in "
+                f"namespace={namespace_name}: stored pod name '{stored_pod_name}' was not found and "
+                f"{len(label_matches)} pods share label app={sanitized}."
+            )
+        return None
+
+    @classmethod
     def delete_pod(cls, namespace_name: str, pod_name: str) -> None:
         PodManager.delete(DeletePodDataClass(
             namespace_name=namespace_name,
@@ -272,10 +334,11 @@ class KubernetesContainerManager(ContainerManager):
         if not namespace:
             return []
 
-        # The gRPC request's container_id is the DATABASE id. Kubernetes resources are looked up by
-        # their k8s id, while the snapshot Job updates the DB row by DB id. So resolve the container's
-        # kubernetes_id from the DB (using container-maker's own DB_* env), use it for the k8s lookups,
-        # and keep the DB id (data.container_id) for the Job's CONTAINER_ID.
+        # The gRPC request's container_id is the DATABASE id. The snapshot Job updates the DB row by
+        # that DB id, so it is kept as the Job's CONTAINER_ID. But we must NOT trust the DB's
+        # kubernetes_id (pod uid) to find the pod -- that value is historically unreliable (it can be
+        # wrong from creation or stale after a pod is recreated). Instead resolve the live pod from
+        # this container's own DB row (exact pod name, with a stable label as a fallback).
         db_config: DBConfig = DBConfig(
             host=os.getenv("DB_HOST"),
             port=int(os.getenv("DB_PORT", "5432")),
@@ -286,21 +349,22 @@ class KubernetesContainerManager(ContainerManager):
         container_row = ContainerOps(db_config).find_one(filters={"id": data.container_id})
         if not container_row.data:
             raise Exception(f'Container not found in database: id={data.container_id}')
-        kubernetes_id: str = container_row.data.get("kubernetes_id")
-        if not kubernetes_id:
-            raise Exception(f'Container {data.container_id} has no kubernetes_id yet (not running in k8s?)')
 
-        pod: dict | None = KubernetesContainerHelper.check_pod(namespace_name=data.network_name, container_id=kubernetes_id)
-        service: dict | None = KubernetesContainerHelper.check_service(namespace_name=data.network_name, container_id=kubernetes_id)
-        ingress: dict | None = KubernetesContainerHelper.check_ingress(namespace_name=data.network_name, container_id=kubernetes_id)
-        final_container: dict = pod or service or ingress or {}
-
-        if not final_container:
-            raise Exception(f'Cannot find kubernetes_id={kubernetes_id} (db id={data.container_id}) in namespace={data.network_name}')
+        pod: dict | None = KubernetesContainerHelper.find_container_pod(
+            namespace_name=data.network_name, container_row_data=container_row.data
+        )
 
         if pod:
-            # if its a pod, we will only get a dictionary back.
-            # To make the output consistent, we will put it in a list.
+            # Self-heal: refresh the DB's kubernetes_id to the pod's real current uid so other code
+            # paths that still key on it behave correctly. Best-effort -- never fail the save on this.
+            real_uid: str | None = pod.get('pod_id')
+            if real_uid and container_row.data.get('kubernetes_id') != real_uid:
+                try:
+                    ContainerOps(db_config).update(filters={"id": data.container_id}, data={"kubernetes_id": real_uid})
+                except Exception as heal_error:
+                    print(f"save(): could not self-heal kubernetes_id for {data.container_id}: {heal_error}")
+
+            # A pod gives a single dict; wrap it in a list to keep the output consistent.
             # DB credentials for the snapshot Job come from container-maker's OWN environment
             # (not the gRPC request), and are forwarded into the Job so it can update save status.
             environment_variables = {
@@ -319,6 +383,25 @@ class KubernetesContainerManager(ContainerManager):
                     environment_variables=environment_variables,
                 )
             )]
+
+        # Not a bare pod: fall back to service / ingress exposed containers. These are resolved by
+        # the stored kubernetes_id (legacy behaviour) and save all the pods they route to.
+        kubernetes_id: str | None = container_row.data.get("kubernetes_id")
+        service: dict | None = (
+            KubernetesContainerHelper.check_service(namespace_name=data.network_name, container_id=kubernetes_id)
+            if kubernetes_id else None
+        )
+        ingress: dict | None = (
+            KubernetesContainerHelper.check_ingress(namespace_name=data.network_name, container_id=kubernetes_id)
+            if kubernetes_id else None
+        )
+
+        if not (service or ingress):
+            raise Exception(
+                f'Cannot find a pod/service/ingress to snapshot for container id={data.container_id} '
+                f'in namespace={data.network_name} (is it running?).'
+            )
+
         if service:
             return ServiceManager.save_service_pods(GetServiceDataClass(
                 namespace_name=data.network_name,
