@@ -11,7 +11,7 @@ rules:
   resources: ["roles", "rolebindings"]
   verbs: ["list", "create", "delete", "get"]
 - apiGroups: ["batch"]
-  resources: ["jobs"]
+  resources: ["jobs", "jobs/status"]
   verbs: ["list", "create", "delete", "get", "watch"]
 - apiGroups: ["apps"]
   resources: ["deployments"]
