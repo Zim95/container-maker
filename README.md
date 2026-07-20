@@ -81,3 +81,37 @@ API to create, list, delete and update containers in different container environ
 3. Build the image
 
 > **Note:** The `prod_*` make targets are currently WIP — they reference missing `scripts/k8s/deployment/*.sh` scripts. Also note that cert-manager must mint the `container-maker-development-service-certs` secret before this pod becomes healthy.
+
+# Running tests
+Tests use Python's built-in `unittest` framework and dependencies are managed by Poetry. The easiest place to run them is inside the deployed `container-maker` dev pod (it already has the Poetry venv and all dependencies), or locally after installing dependencies.
+
+1. Install dependencies (if running locally).
+    ```
+    poetry install
+    ```
+
+2. Unit tests (`tests/unit`, e.g. `tests/unit/containers/` and `tests/unit/resources/`) need **no** cluster — the Kubernetes API, DB and other externals are mocked.
+    ```
+    poetry run python -m unittest discover -s tests/unit -p "test_*.py"
+    ```
+
+3. gRPC transformer tests (`tests/grpc`) also need **no** cluster — they are pure transformer tests.
+    ```
+    poetry run python -m unittest discover -s tests/grpc -p "test_*.py"
+    ```
+
+4. Integration tests (`tests/k8s/integration`) **require** a running Kubernetes cluster with the deployed dependencies and cert secrets in place — they are not runnable standalone.
+    ```
+    poetry run python -m unittest discover -s tests/k8s/integration -p "test_*.py"
+    ```
+
+5. Run a single test module.
+    ```
+    poetry run python -m unittest tests.unit.containers.test_save_container_env
+    ```
+
+6. To run inside the running dev pod, exec into it (see the *Build and deploy: Debug* section), activate the Poetry venv, then run the same `python -m unittest ...` commands.
+    ```
+    source $(poetry env info --path)/bin/activate
+    python -m unittest discover -s tests/unit -p "test_*.py"
+    ```
