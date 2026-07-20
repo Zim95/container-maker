@@ -503,18 +503,23 @@ class SaveUtility(KubernetesResourceManager):
                 namespace_name=job_info['namespace_name'],
                 job_name=job_info['job_name']
             )
-            # Job updates the database directly, so we just return the image name
-            image_name = f'{data.pod_name}-image:latest'            
+            # Job updates the database directly, so we just return the image name.
+            # NOTE: must match what the snapshot Job actually pushed (and wrote to saved_image):
+            # {REPO_NAME}/{pod_name}-image:latest. Without the repo prefix the kubelet can't pull it
+            # (ImagePullBackOff), which previously broke the live terminal on every save.
+            image_name = f'{repo_name}/{data.pod_name}-image:latest'
             print(f"{data.pod_name}: Snapshot job completed successfully")
-            
-            # Step 4: Update pod image definition to use the saved image
+
+            # Step 4: Point the pod's main container at the saved image, so if it CRASHES the kubelet
+            # restarts it from the snapshot immediately (in-place crash recovery). Deliberate
+            # hibernation deletes the pod entirely and resumes via create-from-saved_image instead.
             print(f"{data.pod_name}: Updating pod image definition to {image_name}...")
             PodManager._update_pod_image(
                 namespace_name=data.namespace_name,
                 pod_name=data.pod_name,
                 image_name=image_name
             )
-            print(f"{data.pod_name}: Pod image definition updated. Will use saved image on next restart")
+            print(f"{data.pod_name}: Pod image definition updated (used for in-place crash recovery)")
             
             return {
                 'image_name': image_name
