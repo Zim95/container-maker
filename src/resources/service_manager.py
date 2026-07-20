@@ -12,7 +12,7 @@ from src.resources.dataclasses.service.list_service_dataclass import ListService
 from src.resources import KubernetesResourceManager
 from src.common.exceptions import UnsupportedRuntimeEnvironment
 from src.resources.pod_manager import PodManager
-from src.resources.resource_config import SERVICE_IP_TIMEOUT_SECONDS, SERVICE_TERMINATION_TIMEOUT, SERVICE_ENDPOINTS_TIMEOUT_SECONDS, SNAPSHOT_SIDECAR_NAME
+from src.resources.resource_config import SERVICE_IP_TIMEOUT_SECONDS, SERVICE_TERMINATION_TIMEOUT, SERVICE_ENDPOINTS_TIMEOUT_SECONDS
 
 # third party
 from kubernetes.client.rest import ApiException
@@ -282,7 +282,6 @@ class ServiceManager(KubernetesResourceManager):
                     SavePodDataClass(
                         namespace_name=data.namespace_name,
                         pod_name=pod['pod_name'],
-                        sidecar_pod_name=SNAPSHOT_SIDECAR_NAME,
                         environment_variables={},
                     )
                 )

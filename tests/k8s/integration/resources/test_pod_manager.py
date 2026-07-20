@@ -42,8 +42,6 @@ from src.resources.dataclasses.pod.list_pod_dataclass import ListPodDataClass
 from src.resources.dataclasses.pod.create_pod_dataclass import CreatePodDataClass, ResourceRequirementsDataClass
 from src.common.config import REPO_NAME
 from src.resources.resource_config import (
-    SNAPSHOT_SIDECAR_NAME,
-    SNAPSHOT_SIDECAR_IMAGE_NAME,
     STATUS_SIDECAR_NAME,
     STATUS_SIDECAR_IMAGE_NAME,
     POD_UPTIME_TIMEOUT,
@@ -118,17 +116,15 @@ class TestPodManager(TestCase):
         self.assertEqual(len(pod['pod_ports']), 2)  # since we have 2 target ports.
         self.assertEqual(pod['pod_labels'].get('app'), self.container_name)  # label is app=container_name (not pod_name!)
         # associated_resources now contains the pod's containers
-        self.assertEqual(len(pod['associated_resources']), 3)  # main, snapshot, status containers
+        self.assertEqual(len(pod['associated_resources']), 2)  # main, status containers
 
         # pod container names
         pod_container_names: list[str] = [container['container_name'] for container in pod['associated_resources']]
-        self.assertEqual(SNAPSHOT_SIDECAR_NAME in pod_container_names, True)
         self.assertEqual(self.pod_name in pod_container_names, True)
         self.assertEqual(STATUS_SIDECAR_NAME in pod_container_names, True)
 
         # pod container images
         pod_container_images: list[str] = [container['container_image'] for container in pod['associated_resources']]
-        self.assertEqual(SNAPSHOT_SIDECAR_IMAGE_NAME in pod_container_images, True)
         self.assertEqual(self.image_name in pod_container_images, True)
         self.assertEqual(STATUS_SIDECAR_IMAGE_NAME in pod_container_images, True)
 
@@ -256,7 +252,6 @@ class TestPodManager(TestCase):
         save_pod_data: SavePodDataClass = SavePodDataClass(
             namespace_name=self.namespace_name,
             pod_name=self.pod_name,
-            sidecar_pod_name=SNAPSHOT_SIDECAR_NAME,
             environment_variables={
                 "CONTAINER_ID": "1234567890",
                 "DB_HOST": "testhost",

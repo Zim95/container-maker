@@ -41,7 +41,6 @@ from src.resources.dataclasses.service.get_service_dataclass import GetServiceDa
 from src.resources.dataclasses.service.list_service_dataclass import ListServiceDataClass
 from src.resources.namespace_manager import NamespaceManager
 from src.resources.pod_manager import PodManager
-from src.resources.resource_config import SNAPSHOT_SIDECAR_NAME
 from src.resources.service_manager import ServiceManager
 from src.resources.ingress_manager import IngressManager
 from src.containers import ContainerManager
@@ -379,7 +378,6 @@ class KubernetesContainerManager(ContainerManager):
                 SavePodDataClass(
                     namespace_name=data.network_name,
                     pod_name=pod['pod_name'],
-                    sidecar_pod_name=SNAPSHOT_SIDECAR_NAME,  # Deprecated but kept for compatibility
                     environment_variables=environment_variables,
                 )
             )]

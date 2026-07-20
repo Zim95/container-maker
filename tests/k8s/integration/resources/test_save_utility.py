@@ -71,7 +71,6 @@ class TestSaveUtility(TestCase):
         self.save_pod_data: SavePodDataClass = SavePodDataClass(
             pod_name=self.pod_name,
             namespace_name=self.namespace_name,
-            sidecar_pod_name="unused",
             environment_variables={},
         )
 
