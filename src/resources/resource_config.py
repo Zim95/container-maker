@@ -2,6 +2,12 @@
 import os
 from src.common.config import REPO_NAME
 
+# Cluster CIDRs used by the per-user-namespace NetworkPolicies (isolation): the "allow internet"
+# egress rule carves these out so in-cluster targets stay unreachable. Defaults are docker-desktop's
+# ranges; override per cluster (e.g. Calico/Cilium) via env.
+POD_CIDR: str = os.getenv("POD_CIDR", "10.1.0.0/16")
+SERVICE_CIDR: str = os.getenv("SERVICE_CIDR", "10.96.0.0/12")
+
 # Timeout for getting IP addresses
 INGRESS_IP_TIMEOUT_SECONDS: float = 60.0
 INGRESS_TERMINATION_TIMEOUT: float = 20.0

@@ -6,12 +6,12 @@ from src.resources.dataclasses.namespace.create_namespace_dataclass import Creat
 from src.resources.dataclasses.namespace.delete_namespace_dataclass import DeleteNamespaceDataClass
 from src.common.exceptions import UnsupportedRuntimeEnvironment
 from src.common.logging_setup import get_logger
+from src.resources.manifest_loader import render_manifests
+from src.resources.resource_config import POD_CIDR, SERVICE_CIDR
 
 # third party
 from kubernetes.client import V1Namespace
 from kubernetes.client import V1ObjectMeta
-from kubernetes.client import V1NetworkPolicy
-from kubernetes.client import V1NetworkPolicyIngressRule
 from kubernetes.client import NetworkingV1Api
 from kubernetes.client.rest import ApiException
 
@@ -82,20 +82,12 @@ class NamespaceManager(KubernetesResourceManager):
             namespace: V1Namespace = V1Namespace(
                 metadata=V1ObjectMeta(name=data.namespace_name)
             )
-            cls.client.create_namespace(namespace)
-            network_policy: V1NetworkPolicy = V1NetworkPolicy(
-                metadata=V1ObjectMeta(name=data.namespace_name),
-                spec={
-                    "podSelector": {},
-                    "policyTypes": ["Ingress"],
-                    "ingress": [V1NetworkPolicyIngressRule(_from=None)]
-                }
-            )
-            networking_api: NetworkingV1Api = NetworkingV1Api()
-            response: V1NetworkPolicy = networking_api.create_namespaced_network_policy(data.namespace_name, network_policy)
+            created: V1Namespace = cls.client.create_namespace(namespace)
+            # Apply the isolation NetworkPolicies for this per-user namespace.
+            cls._apply_network_policies(data.namespace_name)
             return {
-                'namespace_id': response.metadata.uid,
-                'namespace_name': response.metadata.name
+                'namespace_id': created.metadata.uid,
+                'namespace_name': created.metadata.name
             }
         except ApiException as ae:
             raise ApiException(f'Error occured while creating namespace: {str(ae)}') from ae
@@ -103,6 +95,30 @@ class NamespaceManager(KubernetesResourceManager):
             raise UnsupportedRuntimeEnvironment(f'Unsupported Run time Environment: {str(ure)}') from ure
         except Exception as e:
             raise Exception(f'Unkown error occured: {str(e)}') from e
+
+    @classmethod
+    def _apply_network_policies(cls, namespace_name: str) -> None:
+        '''
+        Apply the per-user-namespace isolation NetworkPolicies from the manifest template
+        (src/resources/manifests/user_namespace_netpol.yaml): default-deny + narrow allows for DNS,
+        socket-ssh ingress on :22, Postgres egress, and internet egress (minus the cluster CIDRs).
+        Idempotent (409 = already exists is ignored).
+        NOTE: only ENFORCED by a policy-capable CNI (Calico/Cilium); docker-desktop accepts but
+        does not enforce them.
+        '''
+        docs: list[dict] = render_manifests(
+            "user_namespace_netpol.yaml",
+            {"NAMESPACE": namespace_name, "POD_CIDR": POD_CIDR, "SERVICE_CIDR": SERVICE_CIDR},
+        )
+        networking_api: NetworkingV1Api = NetworkingV1Api()
+        for doc in docs:
+            try:
+                networking_api.create_namespaced_network_policy(namespace=namespace_name, body=doc)
+            except ApiException as ae:
+                if ae.status == 409:  # already exists — idempotent re-apply
+                    continue
+                raise
+        logger.info("applied network policies", extra={"namespace_name": namespace_name, "count": len(docs)})
 
     @classmethod
     def poll_termination(cls, namespace_name: str, timeout_seconds: float = 2.0) -> None:
