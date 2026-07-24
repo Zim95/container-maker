@@ -5,6 +5,7 @@ from src.resources import KubernetesResourceManager
 from src.resources.dataclasses.namespace.create_namespace_dataclass import CreateNamespaceDataClass
 from src.resources.dataclasses.namespace.delete_namespace_dataclass import DeleteNamespaceDataClass
 from src.common.exceptions import UnsupportedRuntimeEnvironment
+from src.common.logging_setup import get_logger
 
 # third party
 from kubernetes.client import V1Namespace
@@ -13,6 +14,8 @@ from kubernetes.client import V1NetworkPolicy
 from kubernetes.client import V1NetworkPolicyIngressRule
 from kubernetes.client import NetworkingV1Api
 from kubernetes.client.rest import ApiException
+
+logger = get_logger("namespace_manager")
 
 
 class NamespaceManager(KubernetesResourceManager):
@@ -110,7 +113,7 @@ class NamespaceManager(KubernetesResourceManager):
         while is_terminated != True:
             ns: dict = cls.get(GetNamespaceDataClass(namespace_name=namespace_name))
             is_terminated = (ns == {})
-            print(f'Namespace: {namespace_name} Deleted:', is_terminated)
+            logger.info("polling namespace termination", extra={"namespace_name": namespace_name, "is_terminated": is_terminated})
             time.sleep(timeout_seconds)
 
     @classmethod

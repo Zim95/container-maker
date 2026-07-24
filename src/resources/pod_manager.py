@@ -14,6 +14,7 @@ from src.resources.dataclasses.pod.create_pod_dataclass import CreatePodDataClas
 from src.resources.dataclasses.pod.list_pod_dataclass import ListPodDataClass
 from src.resources.dataclasses.pod.save_pod_dataclass import SavePodDataClass
 from src.common.exceptions import UnsupportedRuntimeEnvironment
+from src.common.logging_setup import get_logger
 from src.resources.resource_config import POD_IP_TIMEOUT_SECONDS, POD_UPTIME_TIMEOUT, POD_TERMINATION_TIMEOUT, STATUS_SIDECAR_IMAGE_NAME, STATUS_SIDECAR_NAME, CONTAINER_READINESS_TIMEOUT_SECONDS, IMAGE_BUILD_TIMEOUT_MINUTES
 from src.resources.resource_config import SNAPSHOT_DIR, SNAPSHOT_FILE_NAME
 from src.common.config import REPO_NAME, REPO_PASSWORD
@@ -46,6 +47,8 @@ from kubernetes.stream import stream
 STATUS_SIDECAR_SERVICE_ACCOUNT_NAME = 'status-sidecar-sa'
 STATUS_SIDECAR_ROLE_NAME = 'pod-watcher-role'
 STATUS_SIDECAR_ROLE_BINDING_NAME = 'pod-watcher-binding'
+
+logger = get_logger("pod_manager")
 
 
 class ExecUtility(KubernetesResourceManager):
@@ -134,12 +137,12 @@ class ExecUtility(KubernetesResourceManager):
                             stdout_chunk: str = stream_client.read_stdout()
                             output += stdout_chunk
                             if stdout_chunk.strip():
-                                print(f"[{container_name}] {stdout_chunk.strip()}")
+                                logger.info(stdout_chunk.strip(), extra={"container_name": container_name, "stream": "stdout"})
                         if stream_client.peek_stderr():
                             stderr_chunk: str = stream_client.read_stderr()
                             output += stderr_chunk
                             if stderr_chunk.strip():
-                                print(f"[{container_name}] {stderr_chunk.strip()}")
+                                logger.info(stderr_chunk.strip(), extra={"container_name": container_name, "stream": "stderr"})
                     return output.strip()
                 finally:
                     # Always close the stream client
@@ -215,7 +218,7 @@ class ExecUtility(KubernetesResourceManager):
                             f.write(decoded)
                             bytes_written += len(decoded)
                     if stderr_output.strip():
-                        print(f"[{container_name}] {stderr_output.strip()}")
+                        logger.info(stderr_output.strip(), extra={"container_name": container_name, "stream": "stderr"})
                     return bytes_written
                 finally:
                     try:
@@ -300,7 +303,7 @@ class LocalPVCStorageUtility(StorageUtility):
                 f"-czvf {snapshot_path} /"
             )
             ExecUtility.run_command(data.pod_name, data.namespace_name, data.pod_name, tar_cmd)
-            print(f"{data.pod_name}: Filesystem snapshot created in main container at {snapshot_path}.")
+            logger.info("filesystem snapshot created in main container", extra={"pod_name": data.pod_name, "namespace_name": data.namespace_name, "snapshot_path": snapshot_path})
             return snapshot_path
         except TimeoutError as te:
             raise TimeoutError(te) from te
@@ -368,7 +371,7 @@ class MinioStorageUtility(StorageUtility):
                 f"-czvf {temp_tar_path} /"
             )
             ExecUtility.run_command(data.pod_name, data.namespace_name, data.pod_name, tar_cmd)
-            print(f"{data.pod_name}: Filesystem snapshot created in main container.")
+            logger.info("filesystem snapshot created in main container", extra={"pod_name": data.pod_name, "namespace_name": data.namespace_name})
 
             # Stream the tar out of the pod to a local temp file (base64 over exec, decoded
             # incrementally) so we never hold the whole filesystem in memory, then upload the
@@ -380,7 +383,7 @@ class MinioStorageUtility(StorageUtility):
                 ExecUtility.stream_command_to_file(data.pod_name, data.namespace_name, data.pod_name, b64_cmd, local_tmp)
                 # fput_object streams from disk in parts (no full in-memory load, unlike write()).
                 storage.client.fput_object(storage.bucket, snapshot_path, local_tmp)
-                print(f"{data.pod_name}: Snapshot uploaded to MinIO at {snapshot_path}.")
+                logger.info("snapshot uploaded to MinIO", extra={"pod_name": data.pod_name, "namespace_name": data.namespace_name, "snapshot_path": snapshot_path})
             finally:
                 if os.path.exists(local_tmp):
                     os.remove(local_tmp)
@@ -457,11 +460,11 @@ class SaveUtility(KubernetesResourceManager):
                 raise Exception('REPO_NAME or REPO_PASSWORD is not set')
             
             # Step 1: Main container creates the tar file
-            print(f"{data.pod_name}: Creating filesystem snapshot...")
+            logger.info("creating filesystem snapshot", extra={"pod_name": data.pod_name, "namespace_name": data.namespace_name})
             snapshot_path = cls.build_tar(data)
-            
+
             # Step 2: Create a Kubernetes Job to process the snapshot
-            print(f"{data.pod_name}: Creating snapshot job...")
+            logger.info("creating snapshot job", extra={"pod_name": data.pod_name, "namespace_name": data.namespace_name})
             env_vars = data.environment_variables or {}
 
             # Extract required values from environment_variables
@@ -498,7 +501,7 @@ class SaveUtility(KubernetesResourceManager):
             )
             
             # Step 3: Wait for job to complete
-            print(f"{data.pod_name}: Waiting for snapshot job to complete...")
+            logger.info("waiting for snapshot job to complete", extra={"pod_name": data.pod_name, "namespace_name": data.namespace_name, "job_name": job_info['job_name']})
             JobManager.wait_for_job_completion(
                 namespace_name=job_info['namespace_name'],
                 job_name=job_info['job_name']
@@ -508,18 +511,18 @@ class SaveUtility(KubernetesResourceManager):
             # {REPO_NAME}/{pod_name}-image:latest. Without the repo prefix the kubelet can't pull it
             # (ImagePullBackOff), which previously broke the live terminal on every save.
             image_name = f'{repo_name}/{data.pod_name}-image:latest'
-            print(f"{data.pod_name}: Snapshot job completed successfully")
+            logger.info("snapshot job completed successfully", extra={"pod_name": data.pod_name, "namespace_name": data.namespace_name, "image_name": image_name})
 
             # Step 4: Point the pod's main container at the saved image, so if it CRASHES the kubelet
             # restarts it from the snapshot immediately (in-place crash recovery). Deliberate
             # hibernation deletes the pod entirely and resumes via create-from-saved_image instead.
-            print(f"{data.pod_name}: Updating pod image definition to {image_name}...")
+            logger.info("updating pod image definition", extra={"pod_name": data.pod_name, "namespace_name": data.namespace_name, "image_name": image_name})
             PodManager._update_pod_image(
                 namespace_name=data.namespace_name,
                 pod_name=data.pod_name,
                 image_name=image_name
             )
-            print(f"{data.pod_name}: Pod image definition updated (used for in-place crash recovery)")
+            logger.info("pod image definition updated (used for in-place crash recovery)", extra={"pod_name": data.pod_name, "namespace_name": data.namespace_name, "image_name": image_name})
             
             return {
                 'image_name': image_name
@@ -703,7 +706,7 @@ class PodManager(KubernetesResourceManager):
             try:
                 pod = cls.client.read_namespaced_pod(name=pod_name, namespace=namespace_name)
                 if pod.status.pod_ip:
-                    print(f'Pod: {pod_name} IP:', pod.status.pod_ip)
+                    logger.info("resolved pod IP", extra={"pod_name": pod_name, "namespace_name": namespace_name, "pod_ip": pod.status.pod_ip})
                     return pod.status.pod_ip
             except ApiException as e:
                 if e.status != 404:  # Ignore 404 errors while pod is being created
@@ -731,7 +734,7 @@ class PodManager(KubernetesResourceManager):
             try:
                 pod = cls.client.read_namespaced_pod(name=pod_name, namespace=namespace_name)
                 current_status = pod.status.phase
-                print(f'Pod: {pod_name} Status:', current_status)
+                logger.info("polling pod status", extra={"pod_name": pod_name, "namespace_name": namespace_name, "status": current_status})
                 if current_status == target_status:
                     return
                 elif current_status in ['Failed', 'Unknown']:
@@ -791,7 +794,7 @@ class PodManager(KubernetesResourceManager):
                         break
 
                 if all_running:
-                    print(f'All containers in pod {pod_name} are running')
+                    logger.info("all containers in pod are running", extra={"pod_name": pod_name, "namespace_name": namespace_name})
                     return
 
             except ApiException as e:
@@ -873,8 +876,8 @@ class PodManager(KubernetesResourceManager):
                 body=pod
             )
             
-            print(f"Updated pod {pod_name} image to {image_name}")
-            
+            logger.info("updated pod image", extra={"pod_name": pod_name, "namespace_name": namespace_name, "image_name": image_name})
+
         except ApiException as e:
             raise ApiException(f'Error updating pod {pod_name} image: {str(e)}') from e
 
@@ -904,7 +907,7 @@ class PodManager(KubernetesResourceManager):
                     )
                 )
                 cls.client.create_namespaced_service_account(namespace_name, service_account)
-                print(f'Created ServiceAccount {STATUS_SIDECAR_SERVICE_ACCOUNT_NAME} in namespace {namespace_name}')
+                logger.info("created status sidecar ServiceAccount", extra={"service_account": STATUS_SIDECAR_SERVICE_ACCOUNT_NAME, "namespace_name": namespace_name})
             else:
                 raise
 
@@ -930,7 +933,7 @@ class PodManager(KubernetesResourceManager):
                     ]
                 )
                 rbac_api.create_namespaced_role(namespace_name, role)
-                print(f'Created Role {STATUS_SIDECAR_ROLE_NAME} in namespace {namespace_name}')
+                logger.info("created status sidecar Role", extra={"role_name": STATUS_SIDECAR_ROLE_NAME, "namespace_name": namespace_name})
             else:
                 raise
 
@@ -961,7 +964,7 @@ class PodManager(KubernetesResourceManager):
                     )
                 )
                 rbac_api.create_namespaced_role_binding(namespace_name, role_binding)
-                print(f'Created RoleBinding {STATUS_SIDECAR_ROLE_BINDING_NAME} in namespace {namespace_name}')
+                logger.info("created status sidecar RoleBinding", extra={"role_binding_name": STATUS_SIDECAR_ROLE_BINDING_NAME, "namespace_name": namespace_name})
             else:
                 raise
 
@@ -1106,7 +1109,7 @@ class PodManager(KubernetesResourceManager):
         while is_terminated != True:
             pod: dict = cls.get(GetPodDataClass(**{'namespace_name': namespace_name, 'pod_name': pod_name}))
             is_terminated = (pod == {})
-            print(f'Pod: {pod_name} Deleted:', is_terminated)
+            logger.info("polling pod termination", extra={"pod_name": pod_name, "namespace_name": namespace_name, "is_terminated": is_terminated})
             time.sleep(timeout_seconds)
 
     @classmethod

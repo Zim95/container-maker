@@ -14,6 +14,7 @@ from browseterm_db.common.config import DBConfig
 
 # modules
 import src.common.config as config
+from src.common.logging_setup import get_logger
 
 # dataclasses
 from src.common.exceptions import UnsupportedRuntimeEnvironment
@@ -47,6 +48,8 @@ from src.containers import ContainerManager
 
 # kubernetes
 from kubernetes.client.exceptions import ApiException
+
+logger = get_logger("containers")
 
 
 class KubernetesContainerHelper:
@@ -361,7 +364,7 @@ class KubernetesContainerManager(ContainerManager):
                 try:
                     ContainerOps(db_config).update(filters={"id": data.container_id}, data={"kubernetes_id": real_uid})
                 except Exception as heal_error:
-                    print(f"save(): could not self-heal kubernetes_id for {data.container_id}: {heal_error}")
+                    logger.warning("save(): could not self-heal kubernetes_id", extra={"container_id": data.container_id}, exc_info=True)
 
             # A pod gives a single dict; wrap it in a list to keep the output consistent.
             # DB credentials for the snapshot Job come from container-maker's OWN environment

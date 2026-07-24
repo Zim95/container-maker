@@ -8,6 +8,7 @@ from src.resources.dataclasses.ingress.get_ingress_dataclass import GetIngressDa
 from src.resources.dataclasses.ingress.list_ingress_dataclass import ListIngressDataClass
 from src.resources import KubernetesResourceManager
 from src.common.exceptions import UnsupportedRuntimeEnvironment
+from src.common.logging_setup import get_logger
 from src.resources.dataclasses.service.get_service_dataclass import GetServiceDataClass
 from src.resources.resource_config import INGRESS_IP_TIMEOUT_SECONDS, INGRESS_TERMINATION_TIMEOUT
 
@@ -17,6 +18,8 @@ from kubernetes.client.models import V1Ingress
 from kubernetes.client import NetworkingV1Api
 
 from src.resources.service_manager import ServiceManager
+
+logger = get_logger("ingress_manager")
 
 
 class IngressManager(KubernetesResourceManager):
@@ -163,7 +166,7 @@ class IngressManager(KubernetesResourceManager):
                     result = future.result()
                     results.extend(result)
                 except Exception as e:
-                    print(f"Error saving service: {str(e)}")
+                    logger.error("error saving service", exc_info=True)
             return results
 
     @classmethod
@@ -172,7 +175,7 @@ class IngressManager(KubernetesResourceManager):
         while (time.time() - start_time) < timeout_seconds:
             try:
                 ingress = cls.client.read_namespaced_ingress(name=ingress_name, namespace=namespace_name)
-                print('Ingress IP status:', ingress.status.load_balancer.ingress)
+                logger.info("polling ingress IP status", extra={"ingress_name": ingress_name, "namespace_name": namespace_name, "load_balancer_ingress": ingress.status.load_balancer.ingress})
                 if ingress.status.load_balancer.ingress:
                     # Try IP first, then hostname if IP is not available
                     return (ingress.status.load_balancer.ingress[0].ip or 
@@ -260,7 +263,7 @@ class IngressManager(KubernetesResourceManager):
         while is_terminated != True:
             ingress: dict = cls.get(GetIngressDataClass(namespace_name=namespace_name, ingress_name=ingress_name))
             is_terminated = (ingress == {})
-            print(f'Ingress: {ingress_name} Deleted:', is_terminated)
+            logger.info("polling ingress termination", extra={"ingress_name": ingress_name, "namespace_name": namespace_name, "is_terminated": is_terminated})
             time.sleep(timeout_seconds)
 
     @classmethod

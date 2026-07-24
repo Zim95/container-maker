@@ -11,6 +11,7 @@ from src.resources.dataclasses.service.get_service_dataclass import GetServiceDa
 from src.resources.dataclasses.service.list_service_dataclass import ListServiceDataClass
 from src.resources import KubernetesResourceManager
 from src.common.exceptions import UnsupportedRuntimeEnvironment
+from src.common.logging_setup import get_logger
 from src.resources.pod_manager import PodManager
 from src.resources.resource_config import SERVICE_IP_TIMEOUT_SECONDS, SERVICE_TERMINATION_TIMEOUT, SERVICE_ENDPOINTS_TIMEOUT_SECONDS
 
@@ -20,6 +21,8 @@ from kubernetes.client import V1Service
 from kubernetes.client import V1ObjectMeta
 from kubernetes.client import V1ServiceSpec
 from kubernetes.client import V1ServicePort
+
+logger = get_logger("service_manager")
 
 
 class ServiceManager(KubernetesResourceManager):
@@ -166,7 +169,7 @@ class ServiceManager(KubernetesResourceManager):
                 if endpoints.subsets:
                     for subset in endpoints.subsets:
                         if subset.addresses and len(subset.addresses) > 0:
-                            print(f'Service {service_name} has {len(subset.addresses)} ready endpoint(s)')
+                            logger.info("service has ready endpoints", extra={"service_name": service_name, "namespace_name": namespace_name, "ready_endpoints": len(subset.addresses)})
                             return True
             except ApiException as e:
                 if e.status != 404:
@@ -257,7 +260,7 @@ class ServiceManager(KubernetesResourceManager):
         while is_terminated != True:
             service: dict = cls.get(GetServiceDataClass(**{'namespace_name': namespace_name, 'service_name': service_name}))
             is_terminated = (service == {})
-            print(f'Service: {service_name} Deleted:', is_terminated)
+            logger.info("polling service termination", extra={"service_name": service_name, "namespace_name": namespace_name, "is_terminated": is_terminated})
             time.sleep(timeout_seconds)
 
     @classmethod
@@ -294,7 +297,7 @@ class ServiceManager(KubernetesResourceManager):
                     result = future.result()  # This will raise any exceptions that occurred
                     results.append(result)
                 except Exception as e:
-                    print(f"Save failed for pod: {str(e)}")
+                    logger.error("save failed for pod", exc_info=True)
             return results
 
     @classmethod

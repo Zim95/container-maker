@@ -20,6 +20,7 @@ from kubernetes.client.rest import ApiException
 
 # modules
 from src.resources import KubernetesResourceManager
+from src.common.logging_setup import get_logger, request_id_var
 from src.resources.resource_config import (
     SNAPSHOT_JOB_IMAGE_NAME,
     SNAPSHOT_JOB_TIMEOUT_SECONDS,
@@ -30,6 +31,8 @@ from src.resources.resource_config import (
     SNAPSHOT_PVC_NAME,
     SNAPSHOT_PVC_SIZE
 )
+
+logger = get_logger("job_manager")
 
 
 class JobManager(KubernetesResourceManager):
@@ -60,7 +63,7 @@ class JobManager(KubernetesResourceManager):
                     )
                 )
                 cls.client.create_namespaced_service_account(namespace_name, service_account)
-                print(f'Created ServiceAccount {SNAPSHOT_JOB_SERVICE_ACCOUNT} in namespace {namespace_name}')
+                logger.info("created snapshot job ServiceAccount", extra={"service_account": SNAPSHOT_JOB_SERVICE_ACCOUNT, "namespace_name": namespace_name})
             else:
                 raise
         
@@ -86,7 +89,7 @@ class JobManager(KubernetesResourceManager):
                     ]
                 )
                 rbac_api.create_namespaced_role(namespace_name, role)
-                print(f'Created Role {SNAPSHOT_JOB_ROLE_NAME} in namespace {namespace_name}')
+                logger.info("created snapshot job Role", extra={"role_name": SNAPSHOT_JOB_ROLE_NAME, "namespace_name": namespace_name})
             else:
                 raise
         
@@ -117,7 +120,7 @@ class JobManager(KubernetesResourceManager):
                     )
                 )
                 rbac_api.create_namespaced_role_binding(namespace_name, role_binding)
-                print(f'Created RoleBinding {SNAPSHOT_JOB_ROLE_BINDING_NAME} in namespace {namespace_name}')
+                logger.info("created snapshot job RoleBinding", extra={"role_binding_name": SNAPSHOT_JOB_ROLE_BINDING_NAME, "namespace_name": namespace_name})
             else:
                 raise
 
@@ -152,7 +155,7 @@ class JobManager(KubernetesResourceManager):
                     }
                 )
                 cls.client.create_namespaced_persistent_volume_claim(namespace_name, pvc)
-                print(f'Created PersistentVolumeClaim {SNAPSHOT_PVC_NAME} in namespace {namespace_name}')
+                logger.info("created snapshot PersistentVolumeClaim", extra={"pvc_name": SNAPSHOT_PVC_NAME, "namespace_name": namespace_name})
             else:
                 raise
 
@@ -217,6 +220,9 @@ class JobManager(KubernetesResourceManager):
                 "DB_DATABASE": db_database,
                 "SNAPSHOT_PATH": snapshot_path,
                 "SNAPSHOT_DIR": SNAPSHOT_DIR,
+                # Propagate the caller's correlation id into the detached Job so its logs
+                # (a separate process/pod) can be tied back to the originating request.
+                "REQUEST_ID": request_id_var.get(),
             }
 
             job_env_vars = [V1EnvVar(name=key, value=str(value)) for key, value in job_env.items() if value is not None]
@@ -271,8 +277,8 @@ class JobManager(KubernetesResourceManager):
             batch_v1 = BatchV1Api()
             batch_v1.create_namespaced_job(namespace=namespace_name, body=job)
             
-            print(f"Created snapshot job: {job_name}")
-            
+            logger.info("created snapshot job", extra={"job_name": job_name, "namespace_name": namespace_name, "pod_name": pod_name, "container_id": container_id})
+
             return {"job_name": job_name, "namespace_name": namespace_name}
             
         except ApiException as ae:
@@ -309,13 +315,13 @@ class JobManager(KubernetesResourceManager):
                 
                 # Check if job succeeded
                 if job.status.succeeded and job.status.succeeded > 0:
-                    print(f"Job {job_name} completed successfully")
+                    logger.info("snapshot job completed successfully", extra={"job_name": job_name, "namespace_name": namespace_name})
                     return {"status": "succeeded", "job_name": job_name}
-                
+
                 # Check if job failed
                 if job.status.failed and job.status.failed > 0:
                     error_msg = f"Job {job_name} failed"
-                    print(error_msg)
+                    logger.error(error_msg, extra={"job_name": job_name, "namespace_name": namespace_name})
                     raise Exception(error_msg)
                 
                 # Still running, wait a bit
@@ -352,7 +358,7 @@ class JobManager(KubernetesResourceManager):
                 propagation_policy='Foreground'  # Delete pods too
             )
             
-            print(f"Deleted job: {job_name}")
+            logger.info("deleted job", extra={"job_name": job_name, "namespace_name": namespace_name})
             return {"status": "deleted", "job_name": job_name}
             
         except ApiException as e:

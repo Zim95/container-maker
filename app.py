@@ -1,6 +1,5 @@
 # builtins
 from concurrent.futures import ThreadPoolExecutor
-import logging
 
 # third party
 import grpc
@@ -9,19 +8,16 @@ from kubernetes.client.rest import ApiException
 
 # modules
 from src.grpc.servicer import ContainerMakerAPIServicerImpl
+from src.grpc.request_id_interceptor import RequestIdInterceptor
 from container_maker_spec.service_pb2_grpc import add_ContainerMakerAPIServicer_to_server
 from src.common.utils import read_certs
 from src.common.exceptions import UnsupportedRuntimeEnvironment
+from src.common.logging_setup import configure_logging, get_logger
 
 
-# logger setup
-logger: logging.Logger = logging.getLogger(__name__)
-handler: logging.StreamHandler = logging.StreamHandler()
-formatter: logging.Formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
-logger.setLevel(logging.DEBUG)
-handler.setLevel(logging.DEBUG)
-handler.setFormatter(formatter)
-logger.addHandler(handler)
+# structured logging setup (JSON lines, matching browseterm-server)
+configure_logging("container-maker")
+logger = get_logger("app")
 
 
 def serve(
@@ -35,9 +31,10 @@ def serve(
     """
     server = None
     try:
-        # create server
+        # create server (RequestIdInterceptor threads the caller's x-request-id into logging)
         server = grpc.server(
-            ThreadPoolExecutor(max_workers=server_threads)
+            ThreadPoolExecutor(max_workers=server_threads),
+            interceptors=[RequestIdInterceptor()]
         )
 
         # add container maker servicer implementation
