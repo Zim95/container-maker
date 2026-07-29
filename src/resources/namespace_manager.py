@@ -7,12 +7,13 @@ from src.resources.dataclasses.namespace.delete_namespace_dataclass import Delet
 from src.common.exceptions import UnsupportedRuntimeEnvironment
 from src.common.logging_setup import get_logger
 from src.resources.manifest_loader import render_manifests
-from src.resources.resource_config import POD_CIDR, SERVICE_CIDR
+from src.resources.resource_config import POD_CIDR, SERVICE_CIDR, tier_substitutions
 
 # third party
 from kubernetes.client import V1Namespace
 from kubernetes.client import V1ObjectMeta
 from kubernetes.client import NetworkingV1Api
+from kubernetes.client import CoreV1Api
 from kubernetes.client.rest import ApiException
 
 logger = get_logger("namespace_manager")
@@ -85,6 +86,8 @@ class NamespaceManager(KubernetesResourceManager):
             created: V1Namespace = cls.client.create_namespace(namespace)
             # Apply the isolation NetworkPolicies for this per-user namespace.
             cls._apply_network_policies(data.namespace_name)
+            # Apply the ResourceQuota + LimitRange for the user's tier (noisy-neighbor / DoS bound).
+            cls._apply_resource_limits(data.namespace_name, data.tier)
             return {
                 'namespace_id': created.metadata.uid,
                 'namespace_name': created.metadata.name
@@ -119,6 +122,54 @@ class NamespaceManager(KubernetesResourceManager):
                     continue
                 raise
         logger.info("applied network policies", extra={"namespace_name": namespace_name, "count": len(docs)})
+
+    @classmethod
+    def _apply_resource_limits(cls, namespace_name: str, tier: str) -> None:
+        '''
+        Apply the tier's ResourceQuota + LimitRange (src/resources/manifests/user_namespace_quota.yaml)
+        to a per-user namespace at creation time. Idempotent: on 409 (already exists) it PATCHes the
+        existing object instead, so calling create again with a different tier re-syncs the limits.
+        '''
+        cls._render_and_apply_resource_limits(namespace_name, tier)
+
+    @classmethod
+    def update_resource_limits(cls, namespace_name: str, tier: str) -> None:
+        '''
+        Change a user's resources when their plan/tier changes: re-render the quota template with the
+        new tier's numbers and PATCH the live ResourceQuota + LimitRange. This is the "resize" path —
+        raising limits takes effect immediately; lowering them applies to the next pod (re)created
+        (k8s does not evict running pods that exceed a newly-lowered quota).
+        '''
+        cls._render_and_apply_resource_limits(namespace_name, tier)
+        logger.info("updated resource limits", extra={"namespace_name": namespace_name, "tier": tier})
+
+    @classmethod
+    def _render_and_apply_resource_limits(cls, namespace_name: str, tier: str) -> None:
+        '''
+        Render user_namespace_quota.yaml for (namespace, tier) and create-or-patch each document.
+        Shared by _apply_resource_limits (create) and update_resource_limits (plan change).
+        '''
+        docs: list[dict] = render_manifests(
+            "user_namespace_quota.yaml",
+            tier_substitutions(namespace_name, tier),
+        )
+        core_api: CoreV1Api = CoreV1Api()
+        creators = {
+            "ResourceQuota": (core_api.create_namespaced_resource_quota, core_api.patch_namespaced_resource_quota),
+            "LimitRange": (core_api.create_namespaced_limit_range, core_api.patch_namespaced_limit_range),
+        }
+        for doc in docs:
+            kind: str = doc["kind"]
+            name: str = doc["metadata"]["name"]
+            create_fn, patch_fn = creators[kind]
+            try:
+                create_fn(namespace=namespace_name, body=doc)
+            except ApiException as ae:
+                if ae.status == 409:  # already exists -> patch it to the (possibly new) tier values
+                    patch_fn(name=name, namespace=namespace_name, body=doc)
+                    continue
+                raise
+        logger.info("applied resource limits", extra={"namespace_name": namespace_name, "tier": tier, "count": len(docs)})
 
     @classmethod
     def poll_termination(cls, namespace_name: str, timeout_seconds: float = 2.0) -> None:

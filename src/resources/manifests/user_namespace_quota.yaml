@@ -1,0 +1,53 @@
+# ResourceQuota + LimitRange applied to every per-user namespace ({user_id}-namespace) at creation
+# time by container-maker (NamespaceManager -> manifest_loader), and PATCHED whenever the user's
+# plan/tier changes (NamespaceManager.update_resource_limits). All ${...} values come from the
+# tier definition in resource_config.TIERS, so raising/lowering a user's resources is "swap the tier
+# numbers and re-apply" — nothing here is a permanent ceiling.
+#
+#   ResourceQuota  = the namespace-wide TOTAL cap (sum across all pods + object counts) -> the
+#                    noisy-neighbor / DoS / cost bound per tenant.
+#   LimitRange     = per-container defaults + min/max -> every container gets sane requests/limits
+#                    (also REQUIRED so pods that omit them still satisfy the quota) and no single
+#                    container can exceed the per-container ceiling.
+#
+# Decrease semantics: lowering the quota does NOT evict running pods that now exceed it; the smaller
+# cap applies to the NEXT pod (re)created. That matches BrowseTerm's recreate-on-resume model.
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: tenant-quota
+  namespace: ${NAMESPACE}
+spec:
+  hard:
+    # Aggregate compute across ALL pods in the namespace.
+    requests.cpu: "${TOTAL_CPU_REQUESTS}"
+    requests.memory: "${TOTAL_MEMORY_REQUESTS}"
+    limits.cpu: "${TOTAL_CPU_LIMITS}"
+    limits.memory: "${TOTAL_MEMORY_LIMITS}"
+    # Aggregate storage + object counts (stop a tenant spawning unbounded pods/PVCs).
+    requests.storage: "${TOTAL_STORAGE}"
+    persistentvolumeclaims: "${MAX_PVCS}"
+    pods: "${MAX_PODS}"
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: tenant-limits
+  namespace: ${NAMESPACE}
+spec:
+  limits:
+    - type: Container
+      # Applied to any container that does NOT specify its own limits/requests. Because the quota
+      # above sets requests.*/limits.*, a pod with no resources would otherwise be REJECTED — these
+      # defaults are what let such pods through.
+      default:
+        cpu: "${DEFAULT_CPU}"
+        memory: "${DEFAULT_MEMORY}"
+      defaultRequest:
+        cpu: "${DEFAULT_REQUEST_CPU}"
+        memory: "${DEFAULT_REQUEST_MEMORY}"
+      # Hard per-container ceiling the app (or a buggy/malicious client) cannot exceed.
+      max:
+        cpu: "${MAX_CPU_PER_CONTAINER}"
+        memory: "${MAX_MEMORY_PER_CONTAINER}"
