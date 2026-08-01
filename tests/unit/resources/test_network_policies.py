@@ -14,7 +14,6 @@ EXPECTED = {
     "default-deny-all",
     "allow-dns-egress",
     "allow-ingress-from-socket-ssh",
-    "allow-egress-postgres",
     "allow-egress-internet-deny-internal",
 }
 
@@ -28,11 +27,19 @@ class TestNetworkPolicyManifest(TestCase):
             {"NAMESPACE": "u1-namespace", "POD_CIDR": "10.1.0.0/16", "SERVICE_CIDR": "10.96.0.0/12"},
         )
 
-    def test_renders_the_five_policies_scoped_to_namespace(self) -> None:
+    def test_renders_the_four_policies_scoped_to_namespace(self) -> None:
         docs = self._render()
         self.assertEqual({d["metadata"]["name"] for d in docs}, EXPECTED)
         for d in docs:
             self.assertEqual(d["metadata"]["namespace"], "u1-namespace")
+
+    def test_no_postgres_egress_hole(self) -> None:
+        # The user pod has no DB credentials (status is written by the central status_monitor), so
+        # there must be NO policy opening :5432 — the old allow-egress-postgres rule is gone.
+        for d in self._render():
+            for rule in d["spec"].get("egress", []):
+                for port in rule.get("ports", []):
+                    self.assertNotEqual(port.get("port"), 5432)
 
     def test_default_deny_covers_both_directions(self) -> None:
         dd = next(d for d in self._render() if d["metadata"]["name"] == "default-deny-all")

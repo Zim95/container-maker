@@ -2,14 +2,14 @@
 # container-maker (NamespaceManager -> manifest_loader). Placeholders ${NAMESPACE}, ${POD_CIDR},
 # ${SERVICE_CIDR} are substituted at apply time.
 #
-# Intent — the user's untrusted root shell (and the status-sidecar sharing its pod) MAY:
+# Intent — the user's untrusted root shell MAY:
 #   - be reached by socket-ssh on :22 (terminal),
 #   - resolve DNS,
-#   - reach Postgres :5432 (the sidecar writes status),
 #   - reach the INTERNET (a dev terminal needs apt/git/pip),
-# but MUST NOT reach other internal services (Redis, MinIO), other tenants, or arbitrary in-cluster
-# IPs. The k8s API (the sidecar's pod-watch) is reachable via the internet rule — its real endpoint
-# is a node/host IP outside the cluster CIDRs.
+# but MUST NOT reach ANY internal service (Postgres, Redis, MinIO), other tenants, or arbitrary
+# in-cluster IPs. The pod needs NO database access: status is written by the central status_monitor
+# (which reads pod phase from the k8s API), not by an in-pod sidecar — so there is no Postgres
+# egress hole at all.
 #
 # ⚠️ NetworkPolicy is only ENFORCED by a policy-capable CNI (Calico/Cilium). docker-desktop's
 # default CNI ACCEPTS these but does NOT enforce them — validate enforcement on the real cluster.
@@ -58,24 +58,6 @@ spec:
       ports:
         - protocol: TCP
           port: 22
----
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: allow-egress-postgres
-  namespace: ${NAMESPACE}
-spec:
-  podSelector: {}
-  policyTypes: ["Egress"]
-  egress:
-    # Only :5432 into the browseterm namespace -> Postgres (Redis/MinIO listen on other ports).
-    - to:
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: browseterm
-      ports:
-        - protocol: TCP
-          port: 5432
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
