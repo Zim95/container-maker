@@ -45,7 +45,6 @@ class TestCreatePodImageOverride(TestCase):
         with patch.object(PodManager, 'client', mock_client), \
              patch.object(PodManager, 'check_kubernetes_client', return_value=None), \
              patch.object(PodManager, 'get', return_value={}), \
-             patch.object(PodManager, '_ensure_status_sidecar_rbac', return_value=None), \
              patch.object(PodManager, 'poll_status', return_value=None), \
              patch.object(PodManager, 'get_pod_response', return_value={'pod_name': self.pod_name}):
             PodManager.create(self.data)

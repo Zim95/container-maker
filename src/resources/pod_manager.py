@@ -15,7 +15,7 @@ from src.resources.dataclasses.pod.list_pod_dataclass import ListPodDataClass
 from src.resources.dataclasses.pod.save_pod_dataclass import SavePodDataClass
 from src.common.exceptions import UnsupportedRuntimeEnvironment
 from src.common.logging_setup import get_logger
-from src.resources.resource_config import POD_IP_TIMEOUT_SECONDS, POD_UPTIME_TIMEOUT, POD_TERMINATION_TIMEOUT, STATUS_SIDECAR_IMAGE_NAME, STATUS_SIDECAR_NAME, CONTAINER_READINESS_TIMEOUT_SECONDS, IMAGE_BUILD_TIMEOUT_MINUTES
+from src.resources.resource_config import POD_IP_TIMEOUT_SECONDS, POD_UPTIME_TIMEOUT, POD_TERMINATION_TIMEOUT, CONTAINER_READINESS_TIMEOUT_SECONDS, IMAGE_BUILD_TIMEOUT_MINUTES
 from src.resources.resource_config import SNAPSHOT_DIR, SNAPSHOT_FILE_NAME
 from src.common.config import REPO_NAME, REPO_PASSWORD
 from browseterm_storage import StorageLayer, get_storage
@@ -33,20 +33,8 @@ from kubernetes.client import V1Volume
 from kubernetes.client import V1EmptyDirVolumeSource
 from kubernetes.client import V1VolumeMount
 from kubernetes.client import V1ResourceRequirements
-from kubernetes.client import V1ServiceAccount
-from kubernetes.client import RbacAuthorizationV1Api
-from kubernetes.client import V1Role
-from kubernetes.client import V1RoleBinding
-from kubernetes.client import V1PolicyRule
-from kubernetes.client import V1RoleRef
-from kubernetes.client import RbacV1Subject
 from kubernetes.stream import ws_client
 from kubernetes.stream import stream
-
-# Constants for RBAC
-STATUS_SIDECAR_SERVICE_ACCOUNT_NAME = 'status-sidecar-sa'
-STATUS_SIDECAR_ROLE_NAME = 'pod-watcher-role'
-STATUS_SIDECAR_ROLE_BINDING_NAME = 'pod-watcher-binding'
 
 # Env var name prefixes carrying credentials only the status-sidecar (and snapshot job) need
 # (DB_* for Postgres, MINIO_* for object storage). These MUST NOT be injected into the main,
@@ -274,60 +262,6 @@ class StorageUtility(ABC):
         pass
 
 
-class LocalPVCStorageUtility(StorageUtility):
-    '''
-    Utility for local PVC storage.
-    Creates tar file directly on shared PVC volume.
-    '''
-
-    @classmethod
-    def get_storage_envs(cls) -> dict:
-        '''
-        Get storage-specific environment variables for local PVC storage.
-        :returns: dict: Environment variables with STORAGE_LAYER and SNAPSHOT_DIR
-        '''
-        return {
-            "STORAGE_LAYER": "local",
-            "SNAPSHOT_DIR": SNAPSHOT_DIR,
-        }
-
-    @classmethod
-    def build_tar(cls, data: SavePodDataClass) -> str:
-        '''
-        Build a tar file of the main container's filesystem on local PVC.
-        :params: data: SavePodDataClass
-        :returns: str: Local snapshot path
-        '''
-        try:
-            KubernetesResourceManager.check_kubernetes_client()
-            
-            # Generate timestamp for snapshot
-            timestamp = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
-            
-            # Get storage instance for LOCAL
-            local_storage_config = {'snapshot_dir': SNAPSHOT_DIR}
-            storage = get_storage(StorageLayer.LOCAL, local_storage_config)
-            
-            # Get snapshot path from storage
-            snapshot_path = storage.snapshot_path(data.namespace_name, data.pod_name, timestamp)
-            
-            # Build the tar file
-            tar_cmd: str = (
-                f"mkdir -p {os.path.dirname(snapshot_path)} && "
-                f"tar --exclude=/proc --exclude=/sys --exclude=/dev --exclude={SNAPSHOT_DIR} "
-                f"-czvf {snapshot_path} /"
-            )
-            ExecUtility.run_command(data.pod_name, data.namespace_name, data.pod_name, tar_cmd)
-            logger.info("filesystem snapshot created in main container", extra={"pod_name": data.pod_name, "namespace_name": data.namespace_name, "snapshot_path": snapshot_path})
-            return snapshot_path
-        except TimeoutError as te:
-            raise TimeoutError(te) from te
-        except ApiException as ae:
-            raise ApiException(f'Error creating local snapshot: {str(ae)}') from ae
-        except Exception as e:
-            raise Exception(f'Error creating local snapshot: {str(e)}') from e
-
-
 class MinioStorageUtility(StorageUtility):
     '''
     Utility for MinIO storage.
@@ -440,8 +374,7 @@ class SaveUtility(KubernetesResourceManager):
             storage_layer_str = os.getenv('STORAGE_LAYER', 'minio').lower()
             storage_layer = StorageLayer(storage_layer_str)
             storage_utility_map = {
-                StorageLayer.LOCAL: LocalPVCStorageUtility,
-                StorageLayer.MINIO: MinioStorageUtility
+                StorageLayer.MINIO: MinioStorageUtility,
             }
             storage_utility: StorageUtility = storage_utility_map.get(storage_layer)
             if storage_utility is None:
@@ -494,8 +427,7 @@ class SaveUtility(KubernetesResourceManager):
             storage_layer_str = os.getenv('STORAGE_LAYER', 'minio').lower()
             storage_layer = StorageLayer(storage_layer_str)
             storage_utility_map = {
-                StorageLayer.LOCAL: LocalPVCStorageUtility,
-                StorageLayer.MINIO: MinioStorageUtility
+                StorageLayer.MINIO: MinioStorageUtility,
             }
             storage_utility = storage_utility_map.get(storage_layer)
             storage_env_vars = storage_utility.get_storage_envs() if storage_utility else {}
@@ -891,93 +823,6 @@ class PodManager(KubernetesResourceManager):
 
         except ApiException as e:
             raise ApiException(f'Error updating pod {pod_name} image: {str(e)}') from e
-
-    @classmethod
-    def _ensure_status_sidecar_rbac(cls, namespace_name: str) -> None:
-        '''
-        Ensure RBAC resources exist for status sidecar pod watching.
-        Creates ServiceAccount, Role, and RoleBinding if they don't exist.
-        This is idempotent - safe to call multiple times.
-
-        :params: namespace_name: str - Namespace to create RBAC resources in
-        '''
-        rbac_api: RbacAuthorizationV1Api = RbacAuthorizationV1Api()
-
-        # Create ServiceAccount if it doesn't exist
-        try:
-            cls.client.read_namespaced_service_account(
-                name=STATUS_SIDECAR_SERVICE_ACCOUNT_NAME,
-                namespace=namespace_name
-            )
-        except ApiException as e:
-            if e.status == 404:
-                service_account = V1ServiceAccount(
-                    metadata=V1ObjectMeta(
-                        name=STATUS_SIDECAR_SERVICE_ACCOUNT_NAME,
-                        namespace=namespace_name
-                    )
-                )
-                cls.client.create_namespaced_service_account(namespace_name, service_account)
-                logger.info("created status sidecar ServiceAccount", extra={"service_account": STATUS_SIDECAR_SERVICE_ACCOUNT_NAME, "namespace_name": namespace_name})
-            else:
-                raise
-
-        # Create Role if it doesn't exist
-        try:
-            rbac_api.read_namespaced_role(
-                name=STATUS_SIDECAR_ROLE_NAME,
-                namespace=namespace_name
-            )
-        except ApiException as e:
-            if e.status == 404:
-                role = V1Role(
-                    metadata=V1ObjectMeta(
-                        name=STATUS_SIDECAR_ROLE_NAME,
-                        namespace=namespace_name
-                    ),
-                    rules=[
-                        V1PolicyRule(
-                            api_groups=[''],
-                            resources=['pods'],
-                            verbs=['get', 'list', 'watch']
-                        )
-                    ]
-                )
-                rbac_api.create_namespaced_role(namespace_name, role)
-                logger.info("created status sidecar Role", extra={"role_name": STATUS_SIDECAR_ROLE_NAME, "namespace_name": namespace_name})
-            else:
-                raise
-
-        # Create RoleBinding if it doesn't exist
-        try:
-            rbac_api.read_namespaced_role_binding(
-                name=STATUS_SIDECAR_ROLE_BINDING_NAME,
-                namespace=namespace_name
-            )
-        except ApiException as e:
-            if e.status == 404:
-                role_binding = V1RoleBinding(
-                    metadata=V1ObjectMeta(
-                        name=STATUS_SIDECAR_ROLE_BINDING_NAME,
-                        namespace=namespace_name
-                    ),
-                    subjects=[
-                        RbacV1Subject(
-                            kind='ServiceAccount',
-                            name=STATUS_SIDECAR_SERVICE_ACCOUNT_NAME,
-                            namespace=namespace_name
-                        )
-                    ],
-                    role_ref=V1RoleRef(
-                        api_group='rbac.authorization.k8s.io',
-                        kind='Role',
-                        name=STATUS_SIDECAR_ROLE_NAME
-                    )
-                )
-                rbac_api.create_namespaced_role_binding(namespace_name, role_binding)
-                logger.info("created status sidecar RoleBinding", extra={"role_binding_name": STATUS_SIDECAR_ROLE_BINDING_NAME, "namespace_name": namespace_name})
-            else:
-                raise
 
     @classmethod
     def create(cls, data: CreatePodDataClass) -> dict:

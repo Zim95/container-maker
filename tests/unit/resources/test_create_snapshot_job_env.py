@@ -49,7 +49,6 @@ class TestCreateSnapshotJobEnv(TestCase):
         mock_batch_api = MagicMock()
         with patch.object(JobManager, 'check_kubernetes_client', return_value=None), \
              patch.object(JobManager, '_ensure_snapshot_job_rbac', return_value=None), \
-             patch.object(JobManager, '_ensure_snapshot_pvc', return_value=None), \
              patch('src.resources.job_manager.BatchV1Api', return_value=mock_batch_api):
             result: dict = JobManager.create_snapshot_job(
                 namespace_name=self.namespace_name,
@@ -111,7 +110,7 @@ class TestCreateSnapshotJobEnv(TestCase):
     def test_none_valued_storage_vars_are_skipped(self) -> None:
         print('Test: test_none_valued_storage_vars_are_skipped')
         self.storage_env_vars = {
-            'STORAGE_LAYER': 'local',
+            'STORAGE_LAYER': 'minio',
             'MINIO_ENDPOINT': None,  # should be dropped
         }
         env_vars = self._invoke()

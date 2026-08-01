@@ -5,17 +5,16 @@ This module provides functionality to create and manage Kubernetes Jobs
 that handle container snapshot building and pushing.
 """
 # built-ins
-import os
 import time
 from typing import Optional
 
 # third-party
 from kubernetes.client import BatchV1Api, V1Job, V1JobSpec, V1PodTemplateSpec, V1PodSpec
 from kubernetes.client import V1Container, V1EnvVar, V1SecurityContext, V1ObjectMeta
-from kubernetes.client import V1VolumeMount, V1Volume, V1PersistentVolumeClaimVolumeSource
+from kubernetes.client import V1VolumeMount, V1Volume
 from kubernetes.client import RbacAuthorizationV1Api, V1ServiceAccount, V1Role, V1RoleBinding
 from kubernetes.client import V1PolicyRule, V1RoleRef, RbacV1Subject
-from kubernetes.client import V1PersistentVolumeClaim, V1ResourceRequirements
+from kubernetes.client import V1ResourceRequirements
 from kubernetes.client.rest import ApiException
 
 # modules
@@ -28,8 +27,6 @@ from src.resources.resource_config import (
     SNAPSHOT_JOB_ROLE_NAME,
     SNAPSHOT_JOB_ROLE_BINDING_NAME,
     SNAPSHOT_DIR,
-    SNAPSHOT_PVC_NAME,
-    SNAPSHOT_PVC_SIZE
 )
 
 logger = get_logger("job_manager")
@@ -125,41 +122,6 @@ class JobManager(KubernetesResourceManager):
                 raise
 
     @classmethod
-    def _ensure_snapshot_pvc(cls, namespace_name: str) -> None:
-        """
-        Ensure PersistentVolumeClaim exists for snapshot storage in the given namespace.
-        Creates PVC if it doesn't exist.
-        This is idempotent - safe to call multiple times.
-
-        :param namespace_name: Namespace to create PVC in
-        """
-        try:
-            cls.client.read_namespaced_persistent_volume_claim(
-                name=SNAPSHOT_PVC_NAME,
-                namespace=namespace_name
-            )
-        except ApiException as e:
-            if e.status == 404:
-                pvc = V1PersistentVolumeClaim(
-                    metadata=V1ObjectMeta(
-                        name=SNAPSHOT_PVC_NAME,
-                        namespace=namespace_name
-                    ),
-                    spec={
-                        'accessModes': ['ReadWriteMany'],
-                        'resources': {
-                            'requests': {
-                                'storage': SNAPSHOT_PVC_SIZE
-                            }
-                        }
-                    }
-                )
-                cls.client.create_namespaced_persistent_volume_claim(namespace_name, pvc)
-                logger.info("created snapshot PersistentVolumeClaim", extra={"pvc_name": SNAPSHOT_PVC_NAME, "namespace_name": namespace_name})
-            else:
-                raise
-
-    @classmethod
     def create_snapshot_job(
         cls,
         namespace_name: str,
@@ -197,10 +159,7 @@ class JobManager(KubernetesResourceManager):
             
             # Ensure RBAC resources exist
             cls._ensure_snapshot_job_rbac(namespace_name)
-            
-            # Ensure PVC exists for local storage
-            cls._ensure_snapshot_pvc(namespace_name)
-            
+
             job_name = f"{pod_name}-snapshot-job"
             
             # storage-specific env vars (STORAGE_LAYER, MINIO_*, SNAPSHOT_DIR) -> list of V1EnvVar
@@ -229,8 +188,6 @@ class JobManager(KubernetesResourceManager):
             # Merge the storage env vars in as individual vars (not a stringified list).
             job_env_vars.extend(storage_env_list)
 
-            storage_layer = os.getenv("STORAGE_LAYER", "minio").lower()
-
             job_container = V1Container(
                 name="snapshot-builder",
                 image=SNAPSHOT_JOB_IMAGE_NAME,
@@ -251,14 +208,10 @@ class JobManager(KubernetesResourceManager):
                 template=V1PodTemplateSpec(
                     spec=V1PodSpec(
                         containers=[job_container],
+                        # emptyDir scratch for unpacking the tar pulled from MinIO. Local PVC storage
+                        # is retired — snapshots always live in object storage now.
                         volumes=[
-                            V1Volume(
-                                name="snapshot-volume",
-                                empty_dir={} if storage_layer == "minio" else None,
-                                persistent_volume_claim=None if storage_layer == "minio" else V1PersistentVolumeClaimVolumeSource(
-                                    claim_name=SNAPSHOT_PVC_NAME
-                                )
-                            )
+                            V1Volume(name="snapshot-volume", empty_dir={})
                         ],
                         restart_policy="Never",  # Don't restart on failure
                         service_account_name=SNAPSHOT_JOB_SERVICE_ACCOUNT
