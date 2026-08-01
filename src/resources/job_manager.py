@@ -229,7 +229,7 @@ class JobManager(KubernetesResourceManager):
             # Merge the storage env vars in as individual vars (not a stringified list).
             job_env_vars.extend(storage_env_list)
 
-            storage_layer = os.getenv("STORAGE_LAYER", "local").lower()
+            storage_layer = os.getenv("STORAGE_LAYER", "minio").lower()
 
             job_container = V1Container(
                 name="snapshot-builder",

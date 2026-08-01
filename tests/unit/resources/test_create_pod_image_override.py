@@ -7,7 +7,6 @@ from kubernetes.client import V1Pod, V1ObjectMeta
 
 # modules
 from src.resources.pod_manager import PodManager
-from src.resources.resource_config import STATUS_SIDECAR_NAME, STATUS_SIDECAR_IMAGE_NAME
 from src.resources.dataclasses.pod.create_pod_dataclass import (
     CreatePodDataClass, ResourceRequirementsDataClass,
 )
@@ -18,8 +17,8 @@ class TestCreatePodImageOverride(TestCase):
     UNIT test (no cluster): the RESUME path. browseterm-server resumes a hibernated
     container by calling createContainer with image_name set to the saved image; that
     image_name is threaded onto the pod's MAIN container (name == pod_name). Here we assert
-    PodManager.create builds the pod spec with the overridden image on the main container,
-    leaving the status sidecar on its own image.
+    PodManager.create builds a single-container pod with the overridden image on the main
+    container (the status sidecar is gone — status is now written by the central status_monitor).
     '''
 
     def setUp(self) -> None:
@@ -55,5 +54,6 @@ class TestCreatePodImageOverride(TestCase):
         args = mock_client.create_namespaced_pod.call_args.args
         pod_manifest: V1Pod = args[1]
         by_name = {c.name: c.image for c in pod_manifest.spec.containers}
-        self.assertEqual(by_name[self.pod_name], self.saved_image)                  # main = saved image
-        self.assertEqual(by_name[STATUS_SIDECAR_NAME], STATUS_SIDECAR_IMAGE_NAME)   # sidecar unchanged
+        self.assertEqual(by_name[self.pod_name], self.saved_image)   # main = saved image
+        # Single-container pod: no status sidecar (replaced by the central status_monitor).
+        self.assertEqual(list(by_name), [self.pod_name])

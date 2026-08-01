@@ -48,6 +48,21 @@ STATUS_SIDECAR_SERVICE_ACCOUNT_NAME = 'status-sidecar-sa'
 STATUS_SIDECAR_ROLE_NAME = 'pod-watcher-role'
 STATUS_SIDECAR_ROLE_BINDING_NAME = 'pod-watcher-binding'
 
+# Env var name prefixes carrying credentials only the status-sidecar (and snapshot job) need
+# (DB_* for Postgres, MINIO_* for object storage). These MUST NOT be injected into the main,
+# user-facing container: it runs an untrusted root shell that could otherwise `printenv` the
+# database/object-store credentials straight out of its own environment. Stripping them here is
+# defence-in-depth alongside the per-namespace NetworkPolicies (the shell can still reach PG on
+# :5432, so withholding the credentials is what actually keeps it out).
+SIDECAR_ONLY_ENV_PREFIXES: tuple[str, ...] = ('DB_', 'MINIO_')
+
+# Labels stamped on every user pod so the central status_monitor can (a) select the pods it watches
+# and (b) map each pod back to its DB row. Must match status_monitor's config. container.id is a
+# uuid.uuid4 UUID, which is a valid k8s label value, so the id rides as a label (not an annotation).
+USER_POD_MANAGED_LABEL_KEY: str = 'browseterm/managed'
+USER_POD_MANAGED_LABEL_VALUE: str = 'user-pod'
+USER_POD_CONTAINER_ID_LABEL: str = 'browseterm/container-id'
+
 logger = get_logger("pod_manager")
 
 
@@ -422,7 +437,7 @@ class SaveUtility(KubernetesResourceManager):
             cls.check_kubernetes_client()
 
             # Get storage layer from environment
-            storage_layer_str = os.getenv('STORAGE_LAYER', 'local').lower()
+            storage_layer_str = os.getenv('STORAGE_LAYER', 'minio').lower()
             storage_layer = StorageLayer(storage_layer_str)
             storage_utility_map = {
                 StorageLayer.LOCAL: LocalPVCStorageUtility,
@@ -476,7 +491,7 @@ class SaveUtility(KubernetesResourceManager):
             db_database = env_vars.get("DB_DATABASE")
 
             # Get storage-specific environment variables from the utility
-            storage_layer_str = os.getenv('STORAGE_LAYER', 'local').lower()
+            storage_layer_str = os.getenv('STORAGE_LAYER', 'minio').lower()
             storage_layer = StorageLayer(storage_layer_str)
             storage_utility_map = {
                 StorageLayer.LOCAL: LocalPVCStorageUtility,
@@ -822,14 +837,10 @@ class PodManager(KubernetesResourceManager):
             # Pod has no containers
             if pod['associated_resources'] == []:
                 raise ApiException(f'Pod {data.pod_name} has no containers')
-            # Pod now has main container and status sidecar (snapshot sidecar removed)
-            if len(pod['associated_resources']) != 2:
-                raise ApiException(f'Pod {data.pod_name} needs a main container and status sidecar container')
+            # The user pod is a single container (status + snapshot sidecars removed).
             container_names: list[str] = [container['container_name'] for container in pod['associated_resources']]
-            if STATUS_SIDECAR_NAME not in container_names:
-                raise ApiException(f'Pod {data.pod_name} needs a status sidecar container')
             if data.pod_name not in container_names:
-                raise ApiException(f'Pod {data.pod_name} needs a main container and status sidecar container')
+                raise ApiException(f'Pod {data.pod_name} needs its main container')
 
             # Wait for main container to be running before attempting to save
             cls.poll_container_readiness(
@@ -864,9 +875,9 @@ class PodManager(KubernetesResourceManager):
             # Read the current pod
             pod = cls.client.read_namespaced_pod(name=pod_name, namespace=namespace_name)
             
-            # Update the image in the main container only (not the status sidecar)
+            # Update the image on the main container (the pod's only container).
             for container in pod.spec.containers:
-                if container.name != STATUS_SIDECAR_NAME:
+                if container.name == pod_name:
                     container.image = image_name
             
             # Patch the pod with the new image
@@ -981,12 +992,14 @@ class PodManager(KubernetesResourceManager):
             if p:
                 return p
 
-            # Ensure RBAC resources exist for status sidecar
-            cls._ensure_status_sidecar_rbac(data.namespace_name)
-            # create environment variable list
-            environment_variables: list[V1EnvVar] = [
+            # The user pod is a single container (the untrusted user shell). Status is written by the
+            # central status_monitor, so there is no in-pod sidecar and no DB credentials in the pod.
+            # We still strip any credential-shaped keys (SIDECAR_ONLY_ENV_PREFIXES) as defence in
+            # depth — nothing should ever hand the user's root shell a DB/object-store credential.
+            main_environment_variables: list[V1EnvVar] = [
                 V1EnvVar(name=name, value=value)
                 for name, value in data.environment_variables.items()
+                if not name.startswith(SIDECAR_ONLY_ENV_PREFIXES)
             ]
             # create target port list
             target_ports: list[V1ContainerPort] = [
@@ -1029,28 +1042,20 @@ class PodManager(KubernetesResourceManager):
                     limits=limits or None,
                 )
 
+            # Single container: the user's shell. The status sidecar is gone (replaced by the central
+            # status_monitor); the snapshot sidecar is gone (replaced by the snapshot Job).
             containers: list[V1Container] = [
                 V1Container(
                     name=data.pod_name,
                     image=data.image_name,
                     ports=target_ports,
-                    env=environment_variables,
+                    env=main_environment_variables,  # credential-stripped: untrusted user shell
                     security_context=V1SecurityContext(
-                        privileged=False  # No longer needs privileged access
+                        privileged=False  # unprivileged: image build/push moved out to the snapshot Job
                     ),
                     volume_mounts=[snapshot_volume_mount],
                     resources=resource_requirements_k8s or None,
                 ),
-                V1Container(
-                    name=STATUS_SIDECAR_NAME,
-                    image=STATUS_SIDECAR_IMAGE_NAME,
-                    security_context=V1SecurityContext(
-                        privileged=False  # No longer needs privileged access
-                    ),
-                    env=environment_variables,
-                    resources=resource_requirements_k8s or None,
-                )
-                # Snapshot sidecar removed - snapshots now handled by Kubernetes Jobs
             ]
             # Create volumes for the pod, with optional snapshot size limit
             empty_dir_kwargs: dict = {}
@@ -1063,11 +1068,22 @@ class PodManager(KubernetesResourceManager):
                 )
             ]
 
+            # container_id (the DB row id) rides on a pod label so the central status_monitor can map
+            # this pod back to its row without any per-pod env. browseterm/managed selects the pods
+            # the monitor watches.
+            container_id: str | None = data.environment_variables.get('CONTAINER_ID')
+            pod_labels: dict = {
+                "app": data.container_name,  # Use base name for label (constant)
+                USER_POD_MANAGED_LABEL_KEY: USER_POD_MANAGED_LABEL_VALUE,
+            }
+            if container_id:
+                pod_labels[USER_POD_CONTAINER_ID_LABEL] = container_id
+
             # create pod manifest
             pod_manifest: V1Pod = V1Pod(
                 metadata=V1ObjectMeta(
                     name=data.pod_name,
-                    labels={"app": data.container_name},  # Use base name for label (constant)
+                    labels=pod_labels,
                     annotations={
                         "nginx.org/websocket-services": data.container_name,  # Use base name
                         "nginx.ingress.kubernetes.io/proxy-read-timeout": "3600",  # for websockets
@@ -1075,10 +1091,11 @@ class PodManager(KubernetesResourceManager):
                     }
                 ),
                 spec=V1PodSpec(
-                    service_account_name=STATUS_SIDECAR_SERVICE_ACCOUNT_NAME,
-                    security_context=V1SecurityContext(
-                        privileged=True
-                    ),
+                    # Default ServiceAccount, and DO NOT mount its API token: the untrusted user shell
+                    # has no reason to talk to the k8s API. (The old sidecar SA + token are gone.)
+                    automount_service_account_token=False,
+                    # No pod-level privilege: image build/push moved out to the snapshot Job, so nothing
+                    # in the user pod needs it anymore.
                     volumes=volumes,
                     containers=containers
                 )
