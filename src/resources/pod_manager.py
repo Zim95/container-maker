@@ -415,13 +415,9 @@ class SaveUtility(KubernetesResourceManager):
             logger.info("creating snapshot job", extra={"pod_name": data.pod_name, "namespace_name": data.namespace_name})
             env_vars = data.environment_variables or {}
 
-            # Extract required values from environment_variables
+            # container_id identifies the DB row the Job updates. DB credentials are NOT extracted or
+            # passed anymore — the Job reads them from the browseterm-db-credentials Secret via envFrom.
             container_id = env_vars.get("CONTAINER_ID")
-            db_host = env_vars.get("DB_HOST")
-            db_port = int(env_vars.get("DB_PORT", 5432))
-            db_username = env_vars.get("DB_USERNAME")
-            db_password = env_vars.get("DB_PASSWORD")
-            db_database = env_vars.get("DB_DATABASE")
 
             # Get storage-specific environment variables from the utility
             storage_layer_str = os.getenv('STORAGE_LAYER', 'minio').lower()
@@ -432,17 +428,17 @@ class SaveUtility(KubernetesResourceManager):
             storage_utility = storage_utility_map.get(storage_layer)
             storage_env_vars = storage_utility.get_storage_envs() if storage_utility else {}
 
+            # The Job runs in the TRUSTED namespace (container-maker's own NAMESPACE, e.g. browseterm),
+            # not the user's — it never touches the user pod, and the DB Secret lives there. The user
+            # namespace is passed separately so the Job can locate the snapshot tar in MinIO.
+            trusted_namespace = os.getenv('NAMESPACE', 'browseterm')
             job_info = JobManager.create_snapshot_job(
-                namespace_name=data.namespace_name,
+                job_namespace=trusted_namespace,
+                user_namespace=data.namespace_name,
                 pod_name=data.pod_name,
                 container_id=container_id,
                 repo_name=repo_name,
                 repo_password=repo_password,
-                db_host=db_host,
-                db_port=db_port,
-                db_username=db_username,
-                db_password=db_password,
-                db_database=db_database,
                 snapshot_path=snapshot_path,
                 storage_env_vars=storage_env_vars
             )

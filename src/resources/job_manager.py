@@ -11,6 +11,7 @@ from typing import Optional
 # third-party
 from kubernetes.client import BatchV1Api, V1Job, V1JobSpec, V1PodTemplateSpec, V1PodSpec
 from kubernetes.client import V1Container, V1EnvVar, V1SecurityContext, V1ObjectMeta
+from kubernetes.client import V1EnvFromSource, V1SecretEnvSource
 from kubernetes.client import V1VolumeMount, V1Volume
 from kubernetes.client import RbacAuthorizationV1Api, V1ServiceAccount, V1Role, V1RoleBinding
 from kubernetes.client import V1PolicyRule, V1RoleRef, RbacV1Subject
@@ -30,6 +31,10 @@ from src.resources.resource_config import (
 )
 
 logger = get_logger("job_manager")
+
+# The snapshot Job reads DB credentials from this Secret (created at cluster setup in the trusted
+# namespace) via envFrom, instead of receiving them as literal env values.
+DB_CREDENTIALS_SECRET_NAME: str = 'browseterm-db-credentials'
 
 
 class JobManager(KubernetesResourceManager):
@@ -124,59 +129,56 @@ class JobManager(KubernetesResourceManager):
     @classmethod
     def create_snapshot_job(
         cls,
-        namespace_name: str,
+        job_namespace: str,
+        user_namespace: str,
         pod_name: str,
         container_id: str,
         repo_name: str,
         repo_password: str,
-        db_host: str,
-        db_port: int,
-        db_username: str,
-        db_password: str,
-        db_database: str,
         snapshot_path: str,
         storage_env_vars: dict
     ) -> dict:
         """
         Create a Kubernetes Job to build and push a container snapshot.
-        
-        :param namespace_name: Namespace to create the job in
+
+        The Job runs in the TRUSTED namespace (job_namespace, e.g. `browseterm`), NOT the user's
+        namespace: it only talks to MinIO / the registry / Postgres over the network, never the user
+        pod, so it has no reason to sit inside the tenant's namespace. It reads DB credentials from
+        the `browseterm-db-credentials` Secret (which lives in the trusted namespace) via envFrom —
+        no DB password is passed as a literal env value. user_namespace is still threaded through as
+        the NAMESPACE_NAME env so the Job can locate this container's tar in MinIO.
+
+        :param job_namespace: Trusted namespace to CREATE THE JOB in (has the DB Secret)
+        :param user_namespace: The user pod's namespace (used only to locate the MinIO snapshot key)
         :param pod_name: Name of the pod being snapshotted
         :param container_id: Database ID of the container
         :param repo_name: Docker registry repository name
         :param repo_password: Docker registry password
-        :param db_host: Database host
-        :param db_port: Database port
-        :param db_username: Database username
-        :param db_password: Database password
-        :param db_database: Database name
-        :param snapshot_path: Path to the snapshot (local path or MinIO key)
+        :param snapshot_path: MinIO object key of the snapshot tar
         :param storage_env_vars: Storage layer specific env vars
-        :return: dict with job_name
+        :return: dict with job_name + namespace_name (the trusted namespace the Job runs in)
         """
         try:
             cls.check_kubernetes_client()
-            
-            # Ensure RBAC resources exist
-            cls._ensure_snapshot_job_rbac(namespace_name)
+
+            # Ensure RBAC resources exist in the trusted namespace where the Job runs
+            cls._ensure_snapshot_job_rbac(job_namespace)
 
             job_name = f"{pod_name}-snapshot-job"
             
             # storage-specific env vars (STORAGE_LAYER, MINIO_*, SNAPSHOT_DIR) -> list of V1EnvVar
             storage_env_list = [V1EnvVar(name=key, value=str(value)) for key, value in storage_env_vars.items() if value is not None]
 
-            # Job container with privileged access (needs a Docker daemon to build/push)
+            # Job container with privileged access (needs a Docker daemon to build/push).
+            # DB_* are NOT here — they come from the browseterm-db-credentials Secret via envFrom
+            # (below). NAMESPACE_NAME is the USER namespace so the Job can find this container's tar
+            # in MinIO, even though the Job itself runs in the trusted namespace.
             job_env = {
                 "CONTAINER_ID": container_id,
                 "POD_NAME": pod_name,
-                "NAMESPACE_NAME": namespace_name,
+                "NAMESPACE_NAME": user_namespace,
                 "REPO_NAME": repo_name,
                 "REPO_PASSWORD": repo_password,
-                "DB_HOST": db_host,
-                "DB_PORT": str(db_port),
-                "DB_USERNAME": db_username,
-                "DB_PASSWORD": db_password,
-                "DB_DATABASE": db_database,
                 "SNAPSHOT_PATH": snapshot_path,
                 "SNAPSHOT_DIR": SNAPSHOT_DIR,
                 # Propagate the caller's correlation id into the detached Job so its logs
@@ -195,6 +197,8 @@ class JobManager(KubernetesResourceManager):
                     privileged=True  # Required for Docker daemon
                 ),
                 env=job_env_vars,
+                # DB_HOST/PORT/USERNAME/PASSWORD/DATABASE from the Secret in the trusted namespace.
+                env_from=[V1EnvFromSource(secret_ref=V1SecretEnvSource(name=DB_CREDENTIALS_SECRET_NAME))],
                 volume_mounts=[
                     V1VolumeMount(
                         name="snapshot-volume",
@@ -222,17 +226,17 @@ class JobManager(KubernetesResourceManager):
             )
             
             job = V1Job(
-                metadata=V1ObjectMeta(name=job_name, namespace=namespace_name),
+                metadata=V1ObjectMeta(name=job_name, namespace=job_namespace),
                 spec=job_spec
             )
-            
-            # Create the job
-            batch_v1 = BatchV1Api()
-            batch_v1.create_namespaced_job(namespace=namespace_name, body=job)
-            
-            logger.info("created snapshot job", extra={"job_name": job_name, "namespace_name": namespace_name, "pod_name": pod_name, "container_id": container_id})
 
-            return {"job_name": job_name, "namespace_name": namespace_name}
+            # Create the job in the trusted namespace
+            batch_v1 = BatchV1Api()
+            batch_v1.create_namespaced_job(namespace=job_namespace, body=job)
+
+            logger.info("created snapshot job", extra={"job_name": job_name, "namespace_name": job_namespace, "user_namespace": user_namespace, "pod_name": pod_name, "container_id": container_id})
+
+            return {"job_name": job_name, "namespace_name": job_namespace}
             
         except ApiException as ae:
             raise ApiException(f'Error creating snapshot job: {str(ae)}') from ae
