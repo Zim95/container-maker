@@ -39,7 +39,7 @@ class TestCreateSnapshotJobEnv(TestCase):
         '''Invoke create_snapshot_job with the cluster mocked; return the job container.'''
         mock_batch_api = MagicMock()
         with patch.object(JobManager, 'check_kubernetes_client', return_value=None), \
-             patch.object(JobManager, '_ensure_snapshot_job_rbac', return_value=None), \
+             patch.object(JobManager, '_ensure_snapshot_job_sa', return_value=None), \
              patch('src.resources.job_manager.BatchV1Api', return_value=mock_batch_api):
             result: dict = JobManager.create_snapshot_job(
                 job_namespace=self.job_namespace,

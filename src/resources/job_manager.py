@@ -13,8 +13,7 @@ from kubernetes.client import BatchV1Api, V1Job, V1JobSpec, V1PodTemplateSpec, V
 from kubernetes.client import V1Container, V1EnvVar, V1SecurityContext, V1ObjectMeta
 from kubernetes.client import V1EnvFromSource, V1SecretEnvSource
 from kubernetes.client import V1VolumeMount, V1Volume
-from kubernetes.client import RbacAuthorizationV1Api, V1ServiceAccount, V1Role, V1RoleBinding
-from kubernetes.client import V1PolicyRule, V1RoleRef, RbacV1Subject
+from kubernetes.client import V1ServiceAccount
 from kubernetes.client import V1ResourceRequirements
 from kubernetes.client.rest import ApiException
 
@@ -25,8 +24,6 @@ from src.resources.resource_config import (
     SNAPSHOT_JOB_IMAGE_NAME,
     SNAPSHOT_JOB_TIMEOUT_SECONDS,
     SNAPSHOT_JOB_SERVICE_ACCOUNT,
-    SNAPSHOT_JOB_ROLE_NAME,
-    SNAPSHOT_JOB_ROLE_BINDING_NAME,
     SNAPSHOT_DIR,
 )
 
@@ -41,16 +38,16 @@ class JobManager(KubernetesResourceManager):
     """Manages Kubernetes Jobs for snapshot operations."""
     
     @classmethod
-    def _ensure_snapshot_job_rbac(cls, namespace_name: str) -> None:
+    def _ensure_snapshot_job_sa(cls, namespace_name: str) -> None:
         """
-        Ensure RBAC resources exist for snapshot jobs.
-        Creates ServiceAccount, Role, and RoleBinding if they don't exist.
-        
-        :param namespace_name: Namespace to create RBAC resources in
+        Ensure the snapshot Job's ServiceAccount exists in the given namespace.
+
+        The Job talks only to MinIO / the registry / Postgres over the network — never the k8s API —
+        so it needs NO Role/RoleBinding. We keep a dedicated, permission-less ServiceAccount and mount
+        no token for it (see automount_service_account_token=False on the Job pod).
+
+        :param namespace_name: Namespace to create the ServiceAccount in
         """
-        rbac_api = RbacAuthorizationV1Api()
-        
-        # Create ServiceAccount if it doesn't exist
         try:
             cls.client.read_namespaced_service_account(
                 name=SNAPSHOT_JOB_SERVICE_ACCOUNT,
@@ -66,63 +63,6 @@ class JobManager(KubernetesResourceManager):
                 )
                 cls.client.create_namespaced_service_account(namespace_name, service_account)
                 logger.info("created snapshot job ServiceAccount", extra={"service_account": SNAPSHOT_JOB_SERVICE_ACCOUNT, "namespace_name": namespace_name})
-            else:
-                raise
-        
-        # Create Role if it doesn't exist (needs access to pods for volume mounting)
-        try:
-            rbac_api.read_namespaced_role(
-                name=SNAPSHOT_JOB_ROLE_NAME,
-                namespace=namespace_name
-            )
-        except ApiException as e:
-            if e.status == 404:
-                role = V1Role(
-                    metadata=V1ObjectMeta(
-                        name=SNAPSHOT_JOB_ROLE_NAME,
-                        namespace=namespace_name
-                    ),
-                    rules=[
-                        V1PolicyRule(
-                            api_groups=[''],
-                            resources=['pods', 'pods/log'],
-                            verbs=['get', 'list']
-                        )
-                    ]
-                )
-                rbac_api.create_namespaced_role(namespace_name, role)
-                logger.info("created snapshot job Role", extra={"role_name": SNAPSHOT_JOB_ROLE_NAME, "namespace_name": namespace_name})
-            else:
-                raise
-        
-        # Create RoleBinding if it doesn't exist
-        try:
-            rbac_api.read_namespaced_role_binding(
-                name=SNAPSHOT_JOB_ROLE_BINDING_NAME,
-                namespace=namespace_name
-            )
-        except ApiException as e:
-            if e.status == 404:
-                role_binding = V1RoleBinding(
-                    metadata=V1ObjectMeta(
-                        name=SNAPSHOT_JOB_ROLE_BINDING_NAME,
-                        namespace=namespace_name
-                    ),
-                    subjects=[
-                        RbacV1Subject(
-                            kind='ServiceAccount',
-                            name=SNAPSHOT_JOB_SERVICE_ACCOUNT,
-                            namespace=namespace_name
-                        )
-                    ],
-                    role_ref=V1RoleRef(
-                        api_group='rbac.authorization.k8s.io',
-                        kind='Role',
-                        name=SNAPSHOT_JOB_ROLE_NAME
-                    )
-                )
-                rbac_api.create_namespaced_role_binding(namespace_name, role_binding)
-                logger.info("created snapshot job RoleBinding", extra={"role_binding_name": SNAPSHOT_JOB_ROLE_BINDING_NAME, "namespace_name": namespace_name})
             else:
                 raise
 
@@ -161,8 +101,8 @@ class JobManager(KubernetesResourceManager):
         try:
             cls.check_kubernetes_client()
 
-            # Ensure RBAC resources exist in the trusted namespace where the Job runs
-            cls._ensure_snapshot_job_rbac(job_namespace)
+            # Ensure the Job's (permission-less) ServiceAccount exists in the trusted namespace
+            cls._ensure_snapshot_job_sa(job_namespace)
 
             job_name = f"{pod_name}-snapshot-job"
             
@@ -218,7 +158,9 @@ class JobManager(KubernetesResourceManager):
                             V1Volume(name="snapshot-volume", empty_dir={})
                         ],
                         restart_policy="Never",  # Don't restart on failure
-                        service_account_name=SNAPSHOT_JOB_SERVICE_ACCOUNT
+                        service_account_name=SNAPSHOT_JOB_SERVICE_ACCOUNT,
+                        # The Job never calls the k8s API, so don't mount its SA token.
+                        automount_service_account_token=False
                     )
                 ),
                 backoff_limit=2,  # Retry up to 2 times

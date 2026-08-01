@@ -87,8 +87,6 @@ SNAPSHOT_PVC_SIZE: str = '20Gi'  # Storage size for snapshot PVC
 SNAPSHOT_JOB_IMAGE_NAME: str = f'{REPO_NAME}/snapshot-job:latest'
 SNAPSHOT_JOB_TIMEOUT_SECONDS: float = 1800.0  # 30 minutes for job completion
 SNAPSHOT_JOB_SERVICE_ACCOUNT: str = 'snapshot-job-sa'
-SNAPSHOT_JOB_ROLE_NAME: str = 'snapshot-job-role'
-SNAPSHOT_JOB_ROLE_BINDING_NAME: str = 'snapshot-job-binding'
 
 # Pod status
 STATUS_SIDECAR_NAME: str = 'status-sidecar'
