@@ -1,0 +1,151 @@
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: resources-cluster-role
+rules:
+- apiGroups: ["", "networking.k8s.io"]
+  resources: ["namespaces", "pods", "pods/exec", "pods/log", "networkpolicies", "services", "endpoints", "service/status", "endpoints/status", "configmaps", "secrets", "ingresses", "persistentvolumes", "persistentvolumeclaims", "serviceaccounts"]
+  verbs: ["list", "create", "delete", "get", "watch", "patch", "update"]
+- apiGroups: ["rbac.authorization.k8s.io"]
+  resources: ["roles", "rolebindings"]
+  verbs: ["list", "create", "delete", "get"]
+- apiGroups: ["batch"]
+  resources: ["jobs", "jobs/status"]
+  verbs: ["list", "create", "delete", "get", "watch"]
+- apiGroups: ["apps"]
+  resources: ["deployments"]
+  verbs: ["list", "create", "delete", "get", "watch", "patch", "update"]
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: resources-sa
+  namespace: ${NAMESPACE}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: resources-cluster-role-binding
+subjects:
+- kind: ServiceAccount
+  name: resources-sa
+  namespace: ${NAMESPACE}
+roleRef:
+  kind: ClusterRole
+  name: resources-cluster-role
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: container-maker
+  namespace: ${NAMESPACE}
+  labels:
+    app: container-maker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: container-maker
+  template:
+    metadata:
+      labels:
+        app: container-maker
+    spec:
+      serviceAccountName: resources-sa
+      containers:
+      - name: container-maker
+        # PROD: baked image pulled from the registry (no hostPath live-mount, no dev tag).
+        image: ${REPO_NAME}/container-maker:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 50052  # gRPC port the server actually listens on
+        resources:
+          requests:
+            cpu: "250m"
+            memory: "512Mi"
+          limits:
+            cpu: "1000m"
+            memory: "1Gi"
+        securityContext:
+          privileged: true
+        env:
+        # PROD cert bundle (CN=container-maker-service), minted by cert-manager.
+        - name: SERVER_KEY
+          valueFrom:
+            secretKeyRef:
+              name: container-maker-service-certs
+              key: server.key
+        - name: SERVER_CRT
+          valueFrom:
+            secretKeyRef:
+              name: container-maker-service-certs
+              key: server.crt
+        - name: CLIENT_KEY
+          valueFrom:
+            secretKeyRef:
+              name: container-maker-service-certs
+              key: client.key
+        - name: CLIENT_CRT
+          valueFrom:
+            secretKeyRef:
+              name: container-maker-service-certs
+              key: client.crt
+        - name: CA_CRT
+          valueFrom:
+            secretKeyRef:
+              name: container-maker-service-certs
+              key: ca.crt
+        - name: REPO_NAME
+          value: ${REPO_NAME}
+        - name: REPO_PASSWORD
+          value: ${REPO_PASSWORD}
+        - name: INGRESS_HOST
+          value: ${INGRESS_HOST}
+        - name: STORAGE_LAYER
+          value: ${STORAGE_LAYER}
+        - name: MINIO_ENDPOINT
+          value: "${MINIO_ENDPOINT}"
+        - name: MINIO_BUCKET
+          value: "${MINIO_BUCKET}"
+        - name: MINIO_SECURE
+          value: "${MINIO_SECURE}"
+        - name: MINIO_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: minio-creds
+              key: MINIO_ROOT_USER
+        - name: MINIO_SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: minio-creds
+              key: MINIO_ROOT_PASSWORD
+        - name: DB_HOST
+          value: "${DB_HOST}"
+        - name: DB_PORT
+          value: "${DB_PORT}"
+        - name: DB_USERNAME
+          value: "${DB_USERNAME}"
+        - name: DB_DATABASE
+          value: "${DB_DATABASE}"
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: pg-password
+              key: POSTGRES_PASSWORD
+        # NOTE: no volumeMounts / hostPath — code is baked into the image (unlike development.yaml).
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: container-maker-service
+  namespace: ${NAMESPACE}
+spec:
+  selector:
+    app: container-maker
+  ports:
+    - protocol: TCP
+      port: 50052
+      targetPort: 50052
+  type: ClusterIP
