@@ -17,6 +17,7 @@ from src.common.exceptions import UnsupportedRuntimeEnvironment
 from src.common.logging_setup import get_logger
 from src.resources.resource_config import POD_IP_TIMEOUT_SECONDS, POD_UPTIME_TIMEOUT, POD_TERMINATION_TIMEOUT, CONTAINER_READINESS_TIMEOUT_SECONDS, IMAGE_BUILD_TIMEOUT_MINUTES
 from src.resources.resource_config import SNAPSHOT_DIR, SNAPSHOT_FILE_NAME
+from src.resources.resource_config import USER_POD_RUNTIME_CLASS
 from src.common.config import REPO_NAME, REPO_PASSWORD
 from browseterm_storage import StorageLayer, get_storage
 
@@ -935,6 +936,12 @@ class PodManager(KubernetesResourceManager):
                     # Default ServiceAccount, and DO NOT mount its API token: the untrusted user shell
                     # has no reason to talk to the k8s API. (The old sidecar SA + token are gone.)
                     automount_service_account_token=False,
+                    # Sandbox the untrusted user shell under gVisor (runsc) so it never calls the host
+                    # kernel directly — a kernel CVE can't escape to the node/other tenants. None (unset
+                    # USER_POD_RUNTIME_CLASS) omits the field → node default runtime (runc), so clusters
+                    # without gVisor (docker-desktop dev) are unaffected. Only USER pods get this; the
+                    # control-plane pod stays runc.
+                    runtime_class_name=USER_POD_RUNTIME_CLASS,
                     # No pod-level privilege: image build/push moved out to the snapshot Job, so nothing
                     # in the user pod needs it anymore.
                     volumes=volumes,

@@ -5,7 +5,7 @@ metadata:
   name: resources-cluster-role
 rules:
 - apiGroups: ["", "networking.k8s.io"]
-  resources: ["namespaces", "pods", "pods/exec", "pods/log", "networkpolicies", "services", "endpoints", "service/status", "endpoints/status", "configmaps", "secrets", "ingresses", "persistentvolumes", "persistentvolumeclaims", "serviceaccounts"]
+  resources: ["namespaces", "pods", "pods/exec", "pods/log", "networkpolicies", "services", "endpoints", "service/status", "endpoints/status", "configmaps", "secrets", "ingresses", "persistentvolumes", "persistentvolumeclaims", "serviceaccounts", "resourcequotas", "limitranges"]
   verbs: ["list", "create", "delete", "get", "watch", "patch", "update"]
 - apiGroups: ["rbac.authorization.k8s.io"]
   resources: ["roles", "rolebindings"]

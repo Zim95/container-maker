@@ -9,6 +9,14 @@ from src.common.config import REPO_NAME
 POD_CIDR: str = os.getenv("POD_CIDR", "10.1.0.0/16")
 SERVICE_CIDR: str = os.getenv("SERVICE_CIDR", "10.96.0.0/12")
 
+# RuntimeClass stamped on USER pods only (the untrusted root shell) so they run under a sandboxed
+# runtime (gVisor's runsc) instead of sharing the host kernel directly — the load-bearing control for
+# multi-tenant untrusted code. container-maker's own control-plane pod is unaffected (stays runc).
+# Empty/unset -> None -> k8s omits runtimeClassName -> the node's default runtime (runc): this keeps
+# clusters WITHOUT gVisor installed (e.g. docker-desktop dev) working unchanged. Prod k3s (where
+# setup.k3s.sh installs runsc + registers the `gvisor` RuntimeClass) sets this to "gvisor".
+USER_POD_RUNTIME_CLASS: str | None = os.getenv("USER_POD_RUNTIME_CLASS", "").strip() or None
+
 # ---------------------------------------------------------------------------------------------
 # Per-tenant resource tiers (ResourceQuota + LimitRange -> user_namespace_quota.yaml).
 #
