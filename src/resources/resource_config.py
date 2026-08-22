@@ -75,8 +75,9 @@ def tier_substitutions(namespace_name: str, tier: str) -> Dict[str, str]:
 INGRESS_IP_TIMEOUT_SECONDS: float = 60.0
 INGRESS_TERMINATION_TIMEOUT: float = 20.0
 
-# Timeout for pod uptime
-POD_UPTIME_TIMEOUT: float = 80.0
+# Timeout for pod uptime. 80s was too tight for a cold image pull (observed 88-105s for the
+# ~110MB ssh_ubuntu image); 180s gives headroom while still failing fast on a genuinely stuck pod.
+POD_UPTIME_TIMEOUT: float = 180.0
 POD_IP_TIMEOUT_SECONDS: float = 20.0
 POD_TERMINATION_TIMEOUT: float = 20.0
 

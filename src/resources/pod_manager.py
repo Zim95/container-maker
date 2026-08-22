@@ -890,6 +890,12 @@ class PodManager(KubernetesResourceManager):
                 V1Container(
                     name=data.pod_name,
                     image=data.image_name,
+                    # image_name is normally tagged :latest, which Kubernetes defaults to
+                    # imagePullPolicy Always (re-checks/re-pulls from the registry on every pod
+                    # create, even seconds after an identical pull). IfNotPresent reuses the
+                    # node's cached layers instead; a real image update is still picked up via
+                    # the documented `crictl rmi` step that clears the stale cached tag.
+                    image_pull_policy="IfNotPresent",
                     ports=target_ports,
                     env=main_environment_variables,  # credential-stripped: untrusted user shell
                     security_context=V1SecurityContext(
