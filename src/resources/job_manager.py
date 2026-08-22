@@ -174,6 +174,24 @@ class JobManager(KubernetesResourceManager):
 
             # Create the job in the trusted namespace
             batch_v1 = BatchV1Api()
+
+            # The job name is deterministic (pod_name-based, see above), so a completed Job
+            # from a prior save of the same pod is still sitting around (ttl_seconds_after_finished
+            # above is 1h, far longer than the gap between two saves) and create_namespaced_job
+            # would 409 on it. Clear it first. Foreground deletion is asynchronous - the name
+            # isn't actually free until the object is gone from etcd, so poll briefly for that
+            # before creating (nothing else deletes/GCs this Job early; see delete_job below).
+            existing = cls.delete_job(job_namespace, job_name)
+            if existing.get("status") == "deleted":
+                for _ in range(20):  # up to ~10s
+                    try:
+                        batch_v1.read_namespaced_job(name=job_name, namespace=job_namespace)
+                        time.sleep(0.5)
+                    except ApiException as e:
+                        if e.status == 404:
+                            break
+                        raise
+
             batch_v1.create_namespaced_job(namespace=job_namespace, body=job)
 
             logger.info("created snapshot job", extra={"job_name": job_name, "namespace_name": job_namespace, "user_namespace": user_namespace, "pod_name": pod_name, "container_id": container_id})
