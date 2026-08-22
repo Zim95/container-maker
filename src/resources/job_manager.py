@@ -169,7 +169,16 @@ class JobManager(KubernetesResourceManager):
                     )
                 ),
                 backoff_limit=2,  # Retry up to 2 times
-                ttl_seconds_after_finished=3600  # Auto-cleanup after 1 hour
+                ttl_seconds_after_finished=3600,  # Auto-cleanup after 1 hour, but only once Complete/Failed
+                # Hard wall-clock cap across the whole Job (all retries combined), not per-pod.
+                # backoff_limit/ttl_seconds_after_finished only act once the Job reaches a terminal
+                # state; they do nothing for a pod that's still "running" but stuck (observed in
+                # practice: an unpack step with no command-level timeout hung for hours under node
+                # I/O contention, and the Job just sat there indefinitely). This is the backstop of
+                # last resort if a future step is ever added without its own run_command timeout.
+                # ~65min: comfortably above one attempt's worst-case sum of per-step timeouts
+                # (unpack 5m + build 25m + tag 1m + login 30s + push 25m + cleanup 2m ≈ 58.5m).
+                active_deadline_seconds=3900
             )
             
             job = V1Job(
