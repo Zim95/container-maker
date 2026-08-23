@@ -94,8 +94,23 @@ SNAPSHOT_PVC_SIZE: str = '20Gi'  # Storage size for snapshot PVC
 
 # Snapshot Job
 SNAPSHOT_JOB_IMAGE_NAME: str = f'{REPO_NAME}/snapshot-job:latest'
-SNAPSHOT_JOB_TIMEOUT_SECONDS: float = 1800.0  # 30 minutes for job completion
+# Must stay comfortably ABOVE the Job's own active_deadline_seconds (job_manager.py, 3900s/65min):
+# that field is the authoritative hard cap on total Job runtime (all retries combined). If this
+# wait loop timed out first, container-maker would give up and report failure to the user while
+# the Job kept running in the background - the same "caller abandons a still-running async
+# operation" bug as the pod-creation timeout fixed earlier this session (bug #6). 4200s (70min)
+# gives the Job's own deadline room to be the one that actually fires first.
+SNAPSHOT_JOB_TIMEOUT_SECONDS: float = 4200.0
 SNAPSHOT_JOB_SERVICE_ACCOUNT: str = 'snapshot-job-sa'
+# Requests/limits for the snapshot Job's pod. It runs privileged (needs a Docker daemon) and does
+# real work (tar extraction, image build, push) but must not be free to consume the whole node -
+# an unbounded build contributed to real cluster-wide instability observed in practice (health
+# check timeouts cascading into HPA scale-up under node contention). Sized similarly to the
+# DEFAULT_TIER ceiling already used for user pods in the TIERS config above.
+SNAPSHOT_JOB_CPU_REQUEST: str = '250m'
+SNAPSHOT_JOB_MEMORY_REQUEST: str = '256Mi'
+SNAPSHOT_JOB_CPU_LIMIT: str = '1'
+SNAPSHOT_JOB_MEMORY_LIMIT: str = '1Gi'
 
 # Pod status
 STATUS_SIDECAR_NAME: str = 'status-sidecar'

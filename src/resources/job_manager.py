@@ -26,6 +26,10 @@ from src.resources.resource_config import (
     SNAPSHOT_JOB_TIMEOUT_SECONDS,
     SNAPSHOT_JOB_SERVICE_ACCOUNT,
     SNAPSHOT_DIR,
+    SNAPSHOT_JOB_CPU_REQUEST,
+    SNAPSHOT_JOB_MEMORY_REQUEST,
+    SNAPSHOT_JOB_CPU_LIMIT,
+    SNAPSHOT_JOB_MEMORY_LIMIT,
 )
 
 logger = get_logger("job_manager")
@@ -138,8 +142,18 @@ class JobManager(KubernetesResourceManager):
             job_container = V1Container(
                 name="snapshot-builder",
                 image=SNAPSHOT_JOB_IMAGE_NAME,
+                # SNAPSHOT_JOB_IMAGE_NAME is tagged :latest, which Kubernetes defaults to
+                # imagePullPolicy Always - re-checking/re-pulling this ~1.1GB image from the
+                # registry on every single save, even seconds after an identical pull. IfNotPresent
+                # reuses the node's cached layers; a real image update is still picked up via the
+                # documented `crictl rmi` step that clears the stale cached tag.
+                image_pull_policy="IfNotPresent",
                 security_context=V1SecurityContext(
                     privileged=True  # Required for Docker daemon
+                ),
+                resources=V1ResourceRequirements(
+                    requests={"cpu": SNAPSHOT_JOB_CPU_REQUEST, "memory": SNAPSHOT_JOB_MEMORY_REQUEST},
+                    limits={"cpu": SNAPSHOT_JOB_CPU_LIMIT, "memory": SNAPSHOT_JOB_MEMORY_LIMIT},
                 ),
                 env=job_env_vars,
                 # DB_HOST/PORT/USERNAME/PASSWORD/DATABASE from the Secret in the trusted namespace.
