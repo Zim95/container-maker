@@ -195,8 +195,15 @@ class JobManager(KubernetesResourceManager):
                 active_deadline_seconds=3900
             )
             
+            # Labeled so the save reconciler can look up (or confirm the absence of) this Job by
+            # the DB container id later -- the Job's own name is unique-per-attempt (see above)
+            # and not derivable from the container id alone.
             job = V1Job(
-                metadata=V1ObjectMeta(name=job_name, namespace=job_namespace),
+                metadata=V1ObjectMeta(
+                    name=job_name,
+                    namespace=job_namespace,
+                    labels={"app": "snapshot-job", "container-id": container_id},
+                ),
                 spec=job_spec
             )
 
@@ -266,6 +273,58 @@ class JobManager(KubernetesResourceManager):
         except Exception as e:
             raise Exception(f'Error waiting for job: {str(e)}') from e
     
+    @classmethod
+    def find_snapshot_job_for_container(cls, namespace_name: str, container_id: str) -> dict:
+        """
+        Look up the most recent snapshot Job for a container by its DB id (via the
+        container-id label set at creation time), for the save reconciler.
+
+        A finished Job lingers for ttl_seconds_after_finished (1h) before Kubernetes garbage
+        collects it, so more than one Job can match the same container_id if it was saved more
+        than once within that window -- the newest by creation time is the one that matters for
+        an in-progress (Pending/Running) save.
+
+        :return: dict with:
+            exists: bool -- whether any matching Job was found at all
+            job_name: str | None
+            active: bool -- Job has a pod currently running/pending
+            terminal_failed: bool -- Job's own controller gave up (BackoffLimitExceeded /
+                DeadlineExceeded), i.e. it will never succeed on its own
+            failure_reason: str | None -- condition reason/message, when terminal_failed
+        """
+        try:
+            cls.check_kubernetes_client()
+            batch_v1 = BatchV1Api()
+            jobs = batch_v1.list_namespaced_job(
+                namespace=namespace_name,
+                label_selector=f"container-id={container_id}",
+            )
+            if not jobs.items:
+                return {"exists": False, "job_name": None, "active": False, "terminal_failed": False, "failure_reason": None}
+
+            newest = max(jobs.items, key=lambda j: j.metadata.creation_timestamp)
+            status = newest.status
+
+            terminal_condition = next(
+                (c for c in (status.conditions or []) if c.type == "Failed" and c.status == "True"),
+                None,
+            )
+            failure_reason = None
+            if terminal_condition:
+                failure_reason = f"{terminal_condition.reason}: {terminal_condition.message}"
+
+            return {
+                "exists": True,
+                "job_name": newest.metadata.name,
+                "active": bool(status.active),
+                "terminal_failed": terminal_condition is not None,
+                "failure_reason": failure_reason,
+            }
+        except ApiException as ae:
+            raise ApiException(f'Error looking up snapshot job for container {container_id}: {str(ae)}') from ae
+        except Exception as e:
+            raise Exception(f'Error looking up snapshot job for container {container_id}: {str(e)}') from e
+
     @classmethod
     def delete_job(cls, namespace_name: str, job_name: str) -> dict:
         """

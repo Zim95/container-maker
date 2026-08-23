@@ -112,6 +112,20 @@ SNAPSHOT_JOB_MEMORY_REQUEST: str = '256Mi'
 SNAPSHOT_JOB_CPU_LIMIT: str = '1'
 SNAPSHOT_JOB_MEMORY_LIMIT: str = '1Gi'
 
+# Save-status reconciler: catches saves stuck at Pending/Running because the snapshot Job's own
+# pod was killed outright (node eviction, OOM, host disk I/O contention) before it got a chance to
+# run its own except-block DB write -- a genuinely dead process can't record its own death.
+# Deliberately NOT a duration-based guess for the common case: it checks the Job's actual live
+# state in Kubernetes (does it still exist, is it terminally Failed) rather than assuming "stuck
+# for N seconds" means orphaned, which would need re-tuning per cluster/image size. How often to
+# sweep is env-overridable since it trades reconciliation latency for load on the k8s API + DB.
+SAVE_RECONCILER_INTERVAL_SECONDS: float = float(os.getenv("SAVE_RECONCILER_INTERVAL_SECONDS", "90"))
+# Pending is set by browseterm-server BEFORE the Job exists (build_tar + Job creation happen after),
+# so "Pending with no Job yet" is normal for a short window and needs an age check, unlike Running
+# (only ever set by the Job itself, so "Running with no Job" is unconditionally orphaned). 15min is
+# generous against the ~1min this should normally take.
+SAVE_RECONCILER_PENDING_GRACE_SECONDS: float = float(os.getenv("SAVE_RECONCILER_PENDING_GRACE_SECONDS", "900"))
+
 # Pod status
 STATUS_SIDECAR_NAME: str = 'status-sidecar'
 STATUS_SIDECAR_IMAGE_NAME: str = f'{REPO_NAME}/status_sidecar:latest'

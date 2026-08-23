@@ -1,4 +1,5 @@
 # builtins
+import threading
 from concurrent.futures import ThreadPoolExecutor
 
 # third party
@@ -13,6 +14,7 @@ from container_maker_spec.service_pb2_grpc import add_ContainerMakerAPIServicer_
 from src.common.utils import read_certs
 from src.common.exceptions import UnsupportedRuntimeEnvironment
 from src.common.logging_setup import configure_logging, get_logger
+from src.resources.save_reconciler import run_loop as run_save_reconciler
 
 
 # structured logging setup (JSON lines, matching browseterm-server)
@@ -56,6 +58,11 @@ def serve(
                 root_certificates=ca_cert
             )
             server.add_secure_port(server_bind, credentials)
+
+        # Any live container-maker replica can reconcile any stuck save on its next tick, so this
+        # doesn't need to be the same pod/process that handled the original (now-dead) save
+        # request -- daemon=True so it never blocks process shutdown.
+        threading.Thread(target=run_save_reconciler, daemon=True, name="save-reconciler").start()
 
         server.start()
         logger.info(f"Server started {'with SSL' if use_ssl else ''} at: {address}:{port}")

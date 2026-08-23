@@ -52,7 +52,8 @@ class TestCreateSnapshotJobEnv(TestCase):
                 storage_env_vars=self.storage_env_vars,
             )
 
-        self.assertEqual(result['job_name'], f'{self.pod_name}-snapshot-job')
+        # Job names are unique-per-attempt (a short random suffix), not deterministic.
+        self.assertTrue(result['job_name'].startswith(f'{self.pod_name}-snapshot-job-'))
         # Runs in the TRUSTED namespace, not the user's.
         self.assertEqual(result['namespace_name'], self.job_namespace)
         self.assertTrue(mock_batch_api.create_namespaced_job.called)
