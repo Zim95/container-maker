@@ -24,6 +24,7 @@ from browseterm_storage import StorageLayer, get_storage
 
 # third party
 from kubernetes.client.rest import ApiException
+from kubernetes.client import CoreV1Api
 from kubernetes.client import V1EnvVar
 from kubernetes.client import V1ContainerPort
 from kubernetes.client import V1Pod
@@ -73,13 +74,19 @@ class ExecUtility(KubernetesResourceManager):
         '''
         try:
             cls.check_kubernetes_client()
+            # A dedicated CoreV1Api instance, not the shared cls.client: stream() monkey-patches
+            # the underlying ApiClient.request method for the duration of the call and restores it
+            # in a finally block, but if this thread is killed mid-call (e.g. a node eviction under
+            # disk/memory pressure) that restore never runs, permanently breaking every other plain
+            # REST call made through a shared client.
+            exec_client: CoreV1Api = CoreV1Api()
 
             # Temporarily suppress the specific ResourceWarning
             with warnings.catch_warnings():
                 warnings.filterwarnings("ignore", category=ResourceWarning, message=".*unclosed.*ssl.SSLSocket.*")
                 # For simple output, use preload_content=True
                 output: str = stream(
-                    cls.client.connect_get_namespaced_pod_exec,
+                    exec_client.connect_get_namespaced_pod_exec,
                     pod_name,
                     namespace_name,
                     container=container_name,
@@ -113,12 +120,14 @@ class ExecUtility(KubernetesResourceManager):
         '''
         try:
             cls.check_kubernetes_client()
+            # See run_command's comment: a dedicated CoreV1Api instance, not the shared cls.client.
+            exec_client: CoreV1Api = CoreV1Api()
             # Suppress ResourceWarning for streaming connections
             with warnings.catch_warnings():
                 warnings.filterwarnings("ignore", category=ResourceWarning, message=".*unclosed.*ssl.SSLSocket.*")
                 # Create WebSocket connection with _preload_content=False for streaming
                 stream_client: ws_client.WSClient = stream(
-                    cls.client.connect_get_namespaced_pod_exec,
+                    exec_client.connect_get_namespaced_pod_exec,
                     pod_name,
                     namespace_name,
                     container=container_name,
@@ -181,11 +190,13 @@ class ExecUtility(KubernetesResourceManager):
         '''
         try:
             cls.check_kubernetes_client()
+            # See run_command's comment: a dedicated CoreV1Api instance, not the shared cls.client.
+            exec_client: CoreV1Api = CoreV1Api()
             bytes_written: int = 0
             with warnings.catch_warnings():
                 warnings.filterwarnings("ignore", category=ResourceWarning, message=".*unclosed.*ssl.SSLSocket.*")
                 stream_client: ws_client.WSClient = stream(
-                    cls.client.connect_get_namespaced_pod_exec,
+                    exec_client.connect_get_namespaced_pod_exec,
                     pod_name,
                     namespace_name,
                     container=container_name,
