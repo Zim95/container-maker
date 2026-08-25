@@ -39,6 +39,7 @@ from src.resources.dataclasses.service.delete_service_dataclass import DeleteSer
 from src.resources.dataclasses.service.get_service_dataclass import GetServiceDataClass
 from src.resources.namespace_manager import NamespaceManager
 from src.resources.pod_manager import PodManager, ExecUtility
+from src.resources.job_manager import JobManager
 from src.resources.service_manager import ServiceManager
 from src.common.config import REPO_NAME
 from src.resources.resource_config import POD_UPTIME_TIMEOUT, CONTAINER_READINESS_TIMEOUT_SECONDS
@@ -180,9 +181,19 @@ class TestHibernateResumeFlow(TestCase):
             container_names=[self.pod_name], timeout_seconds=CONTAINER_READINESS_TIMEOUT_SECONDS)
 
         # save: snapshot the workspace and capture the saved image name to resume from.
+        # PodManager.save() returns as soon as the snapshot Job is created -- it no longer
+        # blocks until the build+push actually finishes (see progress_made.md's "gRPC worker
+        # thread exhaustion" fix). Production gates resume on save_status reaching Succeeded in
+        # the DB rather than on this call's return timing; this test has no DB in the loop, so it
+        # waits on the Job directly instead, using the job_name/job_namespace_name save() now
+        # returns for exactly this purpose.
         save_result: dict = PodManager.save(self.save_pod_data)
         saved_image: str = save_result['image_name']
         self.assertEqual(saved_image, f'{REPO_NAME}/{self.pod_name}-image:latest')
+        JobManager.wait_for_job_completion(
+            namespace_name=save_result['job_namespace_name'],
+            job_name=save_result['job_name'],
+        )
 
         # hibernate: delete the pod (poll_termination blocks until it's gone). The service stays.
         PodManager.delete(DeletePodDataClass(**{

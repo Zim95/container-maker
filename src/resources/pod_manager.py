@@ -1,6 +1,7 @@
 # modules
 from abc import ABC, abstractmethod
 import base64
+import threading
 import time
 import os
 from datetime import datetime
@@ -394,20 +395,32 @@ class SaveUtility(KubernetesResourceManager):
     def save_image(cls, data: SavePodDataClass) -> dict:
         '''
         Save the pod by creating a Kubernetes Job to build and push the snapshot.
-        
+
+        Returns as soon as the Job is created — does NOT block on Job completion. The Job's own
+        process records SUCCEEDED/FAILED in the DB directly (see snapshot_job/main.py), and the
+        save reconciler (src/resources/save_reconciler.py) catches the case where the Job dies
+        without reporting. This call's only remaining post-creation duty — patching the pod's
+        image definition for in-place crash recovery once the Job actually succeeds — is handed
+        off to a dedicated background thread (_wait_and_patch_pod_image) instead of running
+        inline, because inline used to mean holding one of container-maker's gRPC worker threads
+        (container-maker.app.py's --server_threads, default 10, shared across every create/
+        delete/exec/save RPC cluster-wide) for the entire save duration — up to
+        SNAPSHOT_JOB_TIMEOUT_SECONDS (70 min) in the worst case. A handful of concurrent saves
+        could previously exhaust that pool and stall every other user's request.
+
         :params:
             data: SavePodDataClass with environment_variables containing container_id and db credentials
-        :returns: dict: Job information
+        :returns: dict: Image details
         '''
         try:
             cls.check_kubernetes_client()
             from src.resources.job_manager import JobManager
-            
+
             repo_name: str = REPO_NAME
             repo_password: str = REPO_PASSWORD
             if not repo_name or not repo_password:
                 raise Exception('REPO_NAME or REPO_PASSWORD is not set')
-            
+
             # Step 1: Main container creates the tar file
             logger.info("creating filesystem snapshot", extra={"pod_name": data.pod_name, "namespace_name": data.namespace_name})
             snapshot_path = cls.build_tar(data)
@@ -443,33 +456,36 @@ class SaveUtility(KubernetesResourceManager):
                 snapshot_path=snapshot_path,
                 storage_env_vars=storage_env_vars
             )
-            
-            # Step 3: Wait for job to complete
-            logger.info("waiting for snapshot job to complete", extra={"pod_name": data.pod_name, "namespace_name": data.namespace_name, "job_name": job_info['job_name']})
-            JobManager.wait_for_job_completion(
-                namespace_name=job_info['namespace_name'],
-                job_name=job_info['job_name']
-            )
-            # Job updates the database directly, so we just return the image name.
-            # NOTE: must match what the snapshot Job actually pushed (and wrote to saved_image):
-            # {REPO_NAME}/{pod_name}-image:latest. Without the repo prefix the kubelet can't pull it
+
+            # The tag is deterministic (repo + pod name, not content-addressed), so it's known
+            # right now — no need to wait for the build to report it back. NOTE: must match what
+            # the snapshot Job actually pushes (and writes to saved_image): {REPO_NAME}/
+            # {pod_name}-image:latest. Without the repo prefix the kubelet can't pull it
             # (ImagePullBackOff), which previously broke the live terminal on every save.
             image_name = f'{repo_name}/{data.pod_name}-image:latest'
-            logger.info("snapshot job completed successfully", extra={"pod_name": data.pod_name, "namespace_name": data.namespace_name, "image_name": image_name})
 
-            # Step 4: Point the pod's main container at the saved image, so if it CRASHES the kubelet
-            # restarts it from the snapshot immediately (in-place crash recovery). Deliberate
-            # hibernation deletes the pod entirely and resumes via create-from-saved_image instead.
-            logger.info("updating pod image definition", extra={"pod_name": data.pod_name, "namespace_name": data.namespace_name, "image_name": image_name})
-            PodManager._update_pod_image(
-                namespace_name=data.namespace_name,
-                pod_name=data.pod_name,
-                image_name=image_name
-            )
-            logger.info("pod image definition updated (used for in-place crash recovery)", extra={"pod_name": data.pod_name, "namespace_name": data.namespace_name, "image_name": image_name})
-            
+            # Step 3: hand the wait-then-patch-pod-image work to a dedicated thread, off the
+            # shared gRPC worker pool, and return immediately.
+            threading.Thread(
+                target=cls._wait_and_patch_pod_image,
+                kwargs={
+                    'job_namespace': job_info['namespace_name'],
+                    'job_name': job_info['job_name'],
+                    'pod_namespace': data.namespace_name,
+                    'pod_name': data.pod_name,
+                    'image_name': image_name,
+                },
+                daemon=True,
+                name=f"save-finalize-{data.pod_name}",
+            ).start()
+
             return {
-                'image_name': image_name
+                'image_name': image_name,
+                # For any caller that needs a synchronous guarantee the image is actually built
+                # and pushed (e.g. a test that resumes from it immediately) -- since this call no
+                # longer blocks on that itself, pass these to JobManager.wait_for_job_completion.
+                'job_name': job_info['job_name'],
+                'job_namespace_name': job_info['namespace_name'],
             }
         except TimeoutError as te:
             raise TimeoutError(te) from te
@@ -479,6 +495,42 @@ class SaveUtility(KubernetesResourceManager):
             raise UnsupportedRuntimeEnvironment(f'Unsupported Run time Environment: {str(ure)}') from ure
         except Exception as e:
             raise Exception(f'Save pod error occured: {str(e)}') from e
+
+    @classmethod
+    def _wait_and_patch_pod_image(cls, job_namespace: str, job_name: str, pod_namespace: str, pod_name: str, image_name: str) -> None:
+        '''
+        Runs on its own background thread (started by save_image, NOT the shared gRPC worker
+        pool). Waits for the snapshot Job to finish and, only on success, patches the live pod's
+        image definition so a future in-place crash restarts it from the new snapshot.
+
+        Never raises to its caller (there is no caller — it's a thread target): a failed or
+        timed-out Job already gets Failed recorded in the DB by the Job's own process, or by the
+        save reconciler if it died without reporting. This thread has nothing further to do in
+        that case beyond logging.
+        '''
+        try:
+            from src.resources.job_manager import JobManager
+            logger.info("waiting for snapshot job to complete", extra={"pod_name": pod_name, "namespace_name": pod_namespace, "job_name": job_name})
+            JobManager.wait_for_job_completion(namespace_name=job_namespace, job_name=job_name)
+            logger.info("snapshot job completed successfully", extra={"pod_name": pod_name, "namespace_name": pod_namespace, "image_name": image_name})
+
+            # Point the pod's main container at the saved image, so if it CRASHES the kubelet
+            # restarts it from the snapshot immediately (in-place crash recovery). Deliberate
+            # hibernation deletes the pod entirely and resumes via create-from-saved_image instead.
+            logger.info("updating pod image definition", extra={"pod_name": pod_name, "namespace_name": pod_namespace, "image_name": image_name})
+            PodManager._update_pod_image(
+                namespace_name=pod_namespace,
+                pod_name=pod_name,
+                image_name=image_name
+            )
+            logger.info("pod image definition updated (used for in-place crash recovery)", extra={"pod_name": pod_name, "namespace_name": pod_namespace, "image_name": image_name})
+        except Exception:
+            logger.warning(
+                "snapshot job did not complete successfully; skipping crash-recovery pod-image patch "
+                "(save failure is already/will be recorded in the DB by the Job itself or the save reconciler)",
+                extra={"pod_name": pod_name, "namespace_name": pod_namespace, "job_name": job_name},
+                exc_info=True,
+            )
 
 
 class PodManager(KubernetesResourceManager):
