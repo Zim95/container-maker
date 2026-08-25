@@ -182,7 +182,14 @@ class JobManager(KubernetesResourceManager):
                         automount_service_account_token=False
                     )
                 ),
-                backoff_limit=2,  # Retry up to 2 times
+                # No automatic retries: a failed attempt's pod is not cleaned up until
+                # ttl_seconds_after_finished, so backoff_limit>0 means every failure leaves N extra
+                # pods sitting on the node until then. Under repeated failures (e.g. a bad snapshot,
+                # or the node already under I/O/memory pressure) this compounds the exact resource
+                # pressure that caused failures in the first place. The user can just click Save
+                # again -- retrying is a deliberate, visible action instead of an automatic one that
+                # silently grows pod count.
+                backoff_limit=0,
                 ttl_seconds_after_finished=3600,  # Auto-cleanup after 1 hour, but only once Complete/Failed
                 # Hard wall-clock cap across the whole Job (all retries combined), not per-pod.
                 # backoff_limit/ttl_seconds_after_finished only act once the Job reaches a terminal
