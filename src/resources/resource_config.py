@@ -4,10 +4,19 @@ from typing import Dict
 from src.common.config import REPO_NAME
 
 # Cluster CIDRs used by the per-user-namespace NetworkPolicies (isolation): the "allow internet"
-# egress rule carves these out so in-cluster targets stay unreachable. Defaults are docker-desktop's
-# ranges; override per cluster (e.g. Calico/Cilium) via env.
-POD_CIDR: str = os.getenv("POD_CIDR", "10.1.0.0/16")
-SERVICE_CIDR: str = os.getenv("SERVICE_CIDR", "10.96.0.0/12")
+# egress rule carves these out so in-cluster targets stay unreachable. If these don't match the
+# CLUSTER'S REAL ranges, the carve-out silently fails to exclude anything meaningful and the
+# untrusted user pod's egress can reach other tenants/Postgres/Redis/MinIO despite this policy
+# appearing to deny it (P21 - verified against a real k3d/k3s cluster: `kubectl get pods -A` /
+# `kubectl get svc -A` show actual pod IPs under 10.42.0.0/16 and ClusterIPs under 10.43.0.0/16 -
+# k3s's own defaults, which apply the same whether it's a k3d-wrapped dev cluster or a bare
+# single-node k3s prod host - NOT docker-desktop's Kubernetes ranges this previously defaulted
+# to, which were 10.1.0.0/16 / 10.96.0.0/12 and never matched any real k3s cluster this project
+# runs on). Always confirm against the real target cluster before relying on these defaults;
+# override via env for any cluster with different ranges (e.g. Calico/Cilium with a non-default
+# CIDR).
+POD_CIDR: str = os.getenv("POD_CIDR", "10.42.0.0/16")
+SERVICE_CIDR: str = os.getenv("SERVICE_CIDR", "10.43.0.0/16")
 
 # RuntimeClass stamped on USER pods only (the untrusted root shell) so they run under a sandboxed
 # runtime (gVisor's runsc) instead of sharing the host kernel directly — the load-bearing control for

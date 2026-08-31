@@ -53,9 +53,18 @@ def serve(
             server_key = read_certs('SERVER_KEY', './cert/server.key')
             server_cert = read_certs('SERVER_CRT', './cert/server.crt')
             ca_cert = read_certs('CA_CRT', './cert/ca.crt')
+            # P21 (~/browseterm/p.md's "P21" section, plan section 18: "Inspect whether current
+            # gRPC setup truly enforces client authentication; do not call it mTLS unless
+            # verified"): grpc.ssl_server_credentials' require_client_auth defaults to False.
+            # Without it explicitly set True, root_certificates was accepted but never actually
+            # used to REQUIRE/verify a client cert - any client could connect over plain
+            # server-authenticated TLS with no client cert at all, despite the client side
+            # (browseterm-server-local's grpc_utils.py) always presenting one. This was one-way
+            # TLS, not mTLS, though CLIENT_KEY/CLIENT_CRT/CA_CRT were already wired end to end.
             credentials = grpc.ssl_server_credentials(
-                [(server_key, server_cert)], 
-                root_certificates=ca_cert
+                [(server_key, server_cert)],
+                root_certificates=ca_cert,
+                require_client_auth=True,
             )
             server.add_secure_port(server_bind, credentials)
 
