@@ -11,17 +11,18 @@ class TestSaveContainerEnvFromEnviron(TestCase):
     '''
     Unit test for KubernetesContainerManager.save().
 
-    This is a UNIT test: no cluster, no DB. The namespace lookup, the DB lookup
-    (ContainerOps.find_one/update), the pod listing (PodManager.list) and PodManager.save are all
-    mocked.
+    This is a UNIT test: no cluster, no Cloud. The namespace lookup, the container lookup
+    (CloudClient.get_container/update_container), the pod listing (PodManager.list) and
+    PodManager.save are all mocked.
 
     Guards:
       1. The request's container_id is the DB id. save() resolves the LIVE pod from the container's
-         own DB row (exact pod name in associated_resources) -- NOT from the unreliable
+         own row (exact pod name in associated_resources) -- NOT from the unreliable
          kubernetes_id -- and snapshots that pod.
-      2. The pod's real current uid is written back to the DB (self-heal of kubernetes_id).
-      3. DB credentials for the snapshot Job come from container-maker's OWN environment (os.getenv)
-         and CONTAINER_ID stays the DB id (so the Job updates the right row).
+      2. The pod's real current uid is written back via Cloud (self-heal of kubernetes_id).
+      3. CONTAINER_ID stays the DB id (so the Job updates the right row). No DB credentials of any
+         kind are forwarded to the Job any more (container-maker holds none itself, P17+this
+         migration - see p.md's writeup).
     '''
 
     def setUp(self) -> None:
@@ -34,20 +35,7 @@ class TestSaveContainerEnvFromEnviron(TestCase):
         self.data: SaveContainerDataClass = SaveContainerDataClass(
             container_id=self.container_id,
             network_name=self.namespace_name,
-            # deliberately different from the environment values below to prove the request values
-            # are NOT the source of truth for the Job's DB credentials.
-            db_host='request-host',
-            db_username='request-user',
-            db_password='request-pass',
-            db_database='request-db',
         )
-        self.fake_env: dict = {
-            'DB_HOST': 'env-host',
-            'DB_PORT': '6543',
-            'DB_USERNAME': 'env-user',
-            'DB_PASSWORD': 'env-pass',
-            'DB_DATABASE': 'env-db',
-        }
         # DB row: correct pod name in associated_resources, but a WRONG kubernetes_id.
         self.row_data: dict = {
             'id': self.container_id,
@@ -58,12 +46,11 @@ class TestSaveContainerEnvFromEnviron(TestCase):
             ],
         }
 
-    def _mock_container_ops(self):
-        '''ContainerOps(...) -> instance whose find_one returns the row; update is captured.'''
-        ops_instance = MagicMock()
-        ops_instance.find_one.return_value = MagicMock(data=self.row_data)
-        ops_instance.update.return_value = MagicMock()
-        return MagicMock(return_value=ops_instance), ops_instance
+    def _mock_cloud_client(self):
+        '''CloudClient(...) -> instance whose get_container returns the row; update_container is captured.'''
+        client_instance = MagicMock()
+        client_instance.get_container.return_value = self.row_data
+        return MagicMock(return_value=client_instance), client_instance
 
     def _pods(self):
         '''PodManager.list output: the target pod PLUS a decoy pod that shares the app label.'''
@@ -73,15 +60,14 @@ class TestSaveContainerEnvFromEnviron(TestCase):
             {'pod_name': 'testc-pod-111', 'pod_id': 'other-uid', 'pod_labels': {'app': 'test-c'}},
         ]
 
-    def test_resolves_pod_by_name_selfheals_uid_and_sources_db_creds_from_environment(self) -> None:
-        print('Test: test_resolves_pod_by_name_selfheals_uid_and_sources_db_creds_from_environment')
-        mock_ops_cls, ops_instance = self._mock_container_ops()
+    def test_resolves_pod_by_name_and_selfheals_uid_via_cloud(self) -> None:
+        print('Test: test_resolves_pod_by_name_and_selfheals_uid_via_cloud')
+        mock_client_cls, client_instance = self._mock_cloud_client()
         mock_save = MagicMock(return_value={'pod_name': self.pod_name})
-        with patch('src.containers.containers.ContainerOps', mock_ops_cls), \
+        with patch('src.containers.containers.CloudClient', mock_client_cls), \
              patch('src.containers.containers.NamespaceManager.get', return_value={'namespace_name': self.namespace_name}), \
              patch('src.containers.containers.PodManager.list', return_value=self._pods()), \
-             patch('src.containers.containers.PodManager.save', mock_save), \
-             patch.dict('src.containers.containers.os.environ', self.fake_env, clear=True):
+             patch('src.containers.containers.PodManager.save', mock_save):
             result: list = KubernetesContainerManager.save(self.data)
 
         # returns the saved pod wrapped in a list
@@ -93,18 +79,15 @@ class TestSaveContainerEnvFromEnviron(TestCase):
         self.assertEqual(save_pod_data.pod_name, self.pod_name)
         self.assertEqual(save_pod_data.namespace_name, self.namespace_name)
 
-        # self-heal: DB kubernetes_id updated to the pod's REAL uid
-        ops_instance.update.assert_called_once()
-        self.assertEqual(ops_instance.update.call_args.kwargs.get('filters'), {'id': self.container_id})
-        self.assertEqual(ops_instance.update.call_args.kwargs.get('data'), {'kubernetes_id': self.real_uid})
+        # self-heal: kubernetes_id updated to the pod's REAL uid, via Cloud, id-scoped only
+        client_instance.update_container.assert_called_once_with(
+            self.container_id, {'kubernetes_id': self.real_uid}
+        )
 
-        # DB creds come from the environment, NOT the request dataclass; CONTAINER_ID stays the DB id
+        # No DB credentials of any kind forwarded to the Job; CONTAINER_ID stays the DB id
         env = save_pod_data.environment_variables
-        self.assertEqual(env['DB_HOST'], 'env-host')
-        self.assertEqual(env['DB_PORT'], '6543')
-        self.assertEqual(env['DB_USERNAME'], 'env-user')
-        self.assertEqual(env['DB_PASSWORD'], 'env-pass')
-        self.assertEqual(env['DB_DATABASE'], 'env-db')
+        self.assertNotIn('DB_HOST', env)
+        self.assertNotIn('DB_PASSWORD', env)
         self.assertEqual(env['CONTAINER_ID'], self.container_id)
 
 

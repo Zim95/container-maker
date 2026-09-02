@@ -15,9 +15,9 @@ to ask yet at all (a fresh Pending row, before the Job has been created).
 
 Runs inside container-maker itself (see app.py) rather than as a separate service: any live
 replica can reconcile any stuck row on its next tick, decoupled from which specific pod/process
-handled the original (now-dead) save request. Writes go through ContainerOps.update() -- the same
-path browseterm-server and the snapshot Job itself use -- so the existing Postgres NOTIFY -> SSE
-pipeline relays the fix to the frontend for free.
+handled the original (now-dead) save request. Writes go through Cloud's internal container API
+(src/cloud_client.py) -- the same path browseterm-server and the snapshot Job itself use -- so
+the existing Postgres NOTIFY -> SSE pipeline relays the fix to the frontend for free.
 """
 # built-ins
 import os
@@ -27,9 +27,9 @@ from datetime import datetime, timezone
 from typing import Optional
 
 # modules
-from browseterm_db.operations.all_operations import ContainerOps
-from browseterm_db.common.config import DBConfig
 from browseterm_db.models.containers import SaveStatus
+from src.cloud_client import CloudClient, CloudClientError
+from src.common.config import BROWSETERM_CLOUD_API_URL, CLOUD_INTERNAL_API_TOKEN
 from src.resources.job_manager import JobManager
 from src.resources.resource_config import (
     SAVE_RECONCILER_INTERVAL_SECONDS,
@@ -38,16 +38,6 @@ from src.resources.resource_config import (
 from src.common.logging_setup import get_logger
 
 logger = get_logger("save_reconciler")
-
-
-def _get_db_config() -> DBConfig:
-    return DBConfig(
-        host=os.getenv("DB_HOST"),
-        port=int(os.getenv("DB_PORT", "5432")),
-        username=os.getenv("DB_USERNAME"),
-        password=os.getenv("DB_PASSWORD"),
-        database=os.getenv("DB_DATABASE"),
-    )
 
 
 def _seconds_since(timestamp) -> float:
@@ -60,21 +50,20 @@ def _seconds_since(timestamp) -> float:
     return (datetime.now(timezone.utc) - timestamp).total_seconds()
 
 
-def _mark_failed(container_ops: ContainerOps, container_id: str, reason: str) -> None:
-    result = container_ops.update(
-        filters={"id": container_id},
-        data={"save_status": SaveStatus.FAILED.value, "save_error": reason[:1000]},
-    )
-    if result.success:
+def _mark_failed(cloud_client: CloudClient, container_id: str, reason: str) -> None:
+    try:
+        cloud_client.update_container(
+            container_id, {"save_status": SaveStatus.FAILED.value, "save_error": reason[:1000]}
+        )
         logger.info("reconciled stuck save", extra={"container_id": container_id, "reason": reason})
-    else:
+    except CloudClientError as e:
         logger.error(
             "failed to reconcile stuck save",
-            extra={"container_id": container_id, "reason": reason, "db_error": result.error},
+            extra={"container_id": container_id, "reason": reason, "cloud_error": e.message},
         )
 
 
-def reconcile_row(container_ops: ContainerOps, row: dict, trusted_namespace: str) -> None:
+def reconcile_row(cloud_client: CloudClient, row: dict, trusted_namespace: str) -> None:
     """Decide the fate of one Pending/Running row. Never raises -- errors are logged and skipped,
     so one bad row (or a transient k8s API blip) doesn't stop the rest of the sweep."""
     container_id = row["id"]
@@ -93,13 +82,13 @@ def reconcile_row(container_ops: ContainerOps, row: dict, trusted_namespace: str
         # If it's gone now, it died without finishing; there is no legitimate "still starting up".
         if not job_state["exists"]:
             _mark_failed(
-                container_ops, container_id,
+                cloud_client, container_id,
                 "Save job disappeared without reporting completion (likely killed by node "
                 "eviction/pressure). Please retry.",
             )
             return
         if job_state["terminal_failed"]:
-            _mark_failed(container_ops, container_id, f"Save job failed: {job_state['failure_reason']}")
+            _mark_failed(cloud_client, container_id, f"Save job failed: {job_state['failure_reason']}")
             return
         # exists and (active or between-poll-ticks) -- leave it, still a legitimate in-progress save.
         return
@@ -112,7 +101,7 @@ def reconcile_row(container_ops: ContainerOps, row: dict, trusted_namespace: str
         if updated_at is None or _seconds_since(updated_at) < SAVE_RECONCILER_PENDING_GRACE_SECONDS:
             return
         _mark_failed(
-            container_ops, container_id,
+            cloud_client, container_id,
             "Save never progressed past being queued (no snapshot job was ever created). Please retry.",
         )
         return
@@ -121,16 +110,16 @@ def reconcile_row(container_ops: ContainerOps, row: dict, trusted_namespace: str
 def reconcile_once() -> int:
     """Run one sweep. Returns the number of rows examined (not the number fixed)."""
     trusted_namespace = os.getenv("NAMESPACE", "browseterm")
-    container_ops = ContainerOps(_get_db_config())
+    cloud_client = CloudClient(BROWSETERM_CLOUD_API_URL, CLOUD_INTERNAL_API_TOKEN)
 
-    result = container_ops.find_stuck_saves()
-    if not result.success:
-        logger.error("could not list in-progress saves", extra={"db_error": result.error})
+    try:
+        rows = cloud_client.find_stuck_saves()
+    except CloudClientError as e:
+        logger.error("could not list in-progress saves", extra={"cloud_error": e.message})
         return 0
 
-    rows = result.data or []
     for row in rows:
-        reconcile_row(container_ops, row, trusted_namespace)
+        reconcile_row(cloud_client, row, trusted_namespace)
     return len(rows)
 
 

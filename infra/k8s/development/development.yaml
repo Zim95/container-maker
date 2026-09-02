@@ -119,19 +119,16 @@ spec:
             secretKeyRef:
               name: minio-creds
               key: MINIO_ROOT_PASSWORD
-        - name: DB_HOST
-          value: "${DB_HOST}"
-        - name: DB_PORT
-          value: "${DB_PORT}"
-        - name: DB_USERNAME
-          value: "${DB_USERNAME}"
-        - name: DB_DATABASE
-          value: "${DB_DATABASE}"
-        - name: DB_PASSWORD
+        # container-maker holds no Postgres credential of its own (migrated off direct DB access
+        # onto Cloud's internal container API - see p.md's writeup, and src/cloud_client.py). Same
+        # shared internal-service-token secret every other trusted-SYSTEM caller uses.
+        - name: BROWSETERM_CLOUD_API_URL
+          value: "${BROWSETERM_CLOUD_API_URL}"
+        - name: CLOUD_INTERNAL_API_TOKEN
           valueFrom:
             secretKeyRef:
-              name: pg-password
-              key: POSTGRES_PASSWORD
+              name: browseterm-internal-api-token
+              key: CLOUD_INTERNAL_API_TOKEN
         volumeMounts:
         - name: app-code
           mountPath: /app

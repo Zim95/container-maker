@@ -14,6 +14,7 @@ paramiko = "^3.5.1"
 grpcio = "^1.70.0"
 click = "^8.1.8"
 jupyter = "^1.1.1"
+httpx = "^0.27.0"
 container-maker-spec = {git = "https://github.com/Zim95/container-maker-spec.git", rev = "main"}
 browseterm-storage = {git = "https://github.com/Zim95/browseterm-storage.git", rev = "main"}
 browseterm-db = {git = "https://github.com/Zim95/browseterm-db.git", rev = "main"}

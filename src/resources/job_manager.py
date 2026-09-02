@@ -12,13 +12,13 @@ from typing import Optional
 # third-party
 from kubernetes.client import BatchV1Api, V1Job, V1JobSpec, V1PodTemplateSpec, V1PodSpec
 from kubernetes.client import V1Container, V1EnvVar, V1SecurityContext, V1ObjectMeta
-from kubernetes.client import V1EnvFromSource, V1SecretEnvSource
 from kubernetes.client import V1VolumeMount, V1Volume
 from kubernetes.client import V1ServiceAccount
 from kubernetes.client import V1ResourceRequirements
 from kubernetes.client.rest import ApiException
 
 # modules
+import src.common.config as config
 from src.resources import KubernetesResourceManager
 from src.common.logging_setup import get_logger, request_id_var
 from src.resources.resource_config import (
@@ -33,10 +33,6 @@ from src.resources.resource_config import (
 )
 
 logger = get_logger("job_manager")
-
-# The snapshot Job reads DB credentials from this Secret (created at cluster setup in the trusted
-# namespace) via envFrom, instead of receiving them as literal env values.
-DB_CREDENTIALS_SECRET_NAME: str = 'browseterm-db-credentials'
 
 
 class JobManager(KubernetesResourceManager):
@@ -93,7 +89,7 @@ class JobManager(KubernetesResourceManager):
         no DB password is passed as a literal env value. user_namespace is still threaded through as
         the NAMESPACE_NAME env so the Job can locate this container's tar in MinIO.
 
-        :param job_namespace: Trusted namespace to CREATE THE JOB in (has the DB Secret)
+        :param job_namespace: Trusted namespace to CREATE THE JOB in
         :param user_namespace: The user pod's namespace (used only to locate the MinIO snapshot key)
         :param pod_name: Name of the pod being snapshotted
         :param container_id: Database ID of the container
@@ -119,9 +115,13 @@ class JobManager(KubernetesResourceManager):
             storage_env_list = [V1EnvVar(name=key, value=str(value)) for key, value in storage_env_vars.items() if value is not None]
 
             # Job container with privileged access (needs a Docker daemon to build/push).
-            # DB_* are NOT here — they come from the browseterm-db-credentials Secret via envFrom
-            # (below). NAMESPACE_NAME is the USER namespace so the Job can find this container's tar
-            # in MinIO, even though the Job itself runs in the trusted namespace.
+            # NAMESPACE_NAME is the USER namespace so the Job can find this container's tar in
+            # MinIO, even though the Job itself runs in the trusted namespace. CLOUD_INTERNAL_API_
+            # TOKEN/BROWSETERM_CLOUD_API_URL let the Job report its own progress through Cloud's
+            # internal snapshot API (allocate_snapshot/report_snapshot_result) - the Job never gets
+            # a Postgres credential of its own (P17 removed that dependency entirely on the Job's
+            # own side; this closes the matching gap on container-maker's side, which never
+            # actually injected these two vars before, so the Job's Cloud API calls always 401'd).
             job_env = {
                 "CONTAINER_ID": container_id,
                 "POD_NAME": pod_name,
@@ -130,6 +130,8 @@ class JobManager(KubernetesResourceManager):
                 "REPO_PASSWORD": repo_password,
                 "SNAPSHOT_PATH": snapshot_path,
                 "SNAPSHOT_DIR": SNAPSHOT_DIR,
+                "BROWSETERM_CLOUD_API_URL": config.BROWSETERM_CLOUD_API_URL,
+                "CLOUD_INTERNAL_API_TOKEN": config.CLOUD_INTERNAL_API_TOKEN,
                 # Propagate the caller's correlation id into the detached Job so its logs
                 # (a separate process/pod) can be tied back to the originating request.
                 "REQUEST_ID": request_id_var.get(),
@@ -156,8 +158,6 @@ class JobManager(KubernetesResourceManager):
                     limits={"cpu": SNAPSHOT_JOB_CPU_LIMIT, "memory": SNAPSHOT_JOB_MEMORY_LIMIT},
                 ),
                 env=job_env_vars,
-                # DB_HOST/PORT/USERNAME/PASSWORD/DATABASE from the Secret in the trusted namespace.
-                env_from=[V1EnvFromSource(secret_ref=V1SecretEnvSource(name=DB_CREDENTIALS_SECRET_NAME))],
                 volume_mounts=[
                     V1VolumeMount(
                         name="snapshot-volume",

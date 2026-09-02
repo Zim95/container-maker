@@ -9,11 +9,9 @@ There is no customizability.
 import os
 from collections import defaultdict
 
-from browseterm_db.operations.all_operations import ContainerOps
-from browseterm_db.common.config import DBConfig
-
 # modules
 import src.common.config as config
+from src.cloud_client import CloudClient, CloudClientError
 from src.common.logging_setup import get_logger
 
 # dataclasses
@@ -341,41 +339,28 @@ class KubernetesContainerManager(ContainerManager):
         # kubernetes_id (pod uid) to find the pod -- that value is historically unreliable (it can be
         # wrong from creation or stale after a pod is recreated). Instead resolve the live pod from
         # this container's own DB row (exact pod name, with a stable label as a fallback).
-        db_config: DBConfig = DBConfig(
-            host=os.getenv("DB_HOST"),
-            port=int(os.getenv("DB_PORT", "5432")),
-            username=os.getenv("DB_USERNAME"),
-            password=os.getenv("DB_PASSWORD"),
-            database=os.getenv("DB_DATABASE"),
-        )
-        container_row = ContainerOps(db_config).find_one(filters={"id": data.container_id})
-        if not container_row.data:
+        cloud_client = CloudClient(config.BROWSETERM_CLOUD_API_URL, config.CLOUD_INTERNAL_API_TOKEN)
+        container_row_data = cloud_client.get_container(data.container_id)
+        if not container_row_data:
             raise Exception(f'Container not found in database: id={data.container_id}')
 
         pod: dict | None = KubernetesContainerHelper.find_container_pod(
-            namespace_name=data.network_name, container_row_data=container_row.data
+            namespace_name=data.network_name, container_row_data=container_row_data
         )
 
         if pod:
             # Self-heal: refresh the DB's kubernetes_id to the pod's real current uid so other code
             # paths that still key on it behave correctly. Best-effort -- never fail the save on this.
             real_uid: str | None = pod.get('pod_id')
-            if real_uid and container_row.data.get('kubernetes_id') != real_uid:
+            if real_uid and container_row_data.get('kubernetes_id') != real_uid:
                 try:
-                    ContainerOps(db_config).update(filters={"id": data.container_id}, data={"kubernetes_id": real_uid})
-                except Exception as heal_error:
+                    cloud_client.update_container(data.container_id, {"kubernetes_id": real_uid})
+                except CloudClientError:
                     logger.warning("save(): could not self-heal kubernetes_id", extra={"container_id": data.container_id}, exc_info=True)
 
             # A pod gives a single dict; wrap it in a list to keep the output consistent.
-            # DB credentials for the snapshot Job come from container-maker's OWN environment
-            # (not the gRPC request), and are forwarded into the Job so it can update save status.
             environment_variables = {
                 "CONTAINER_ID": data.container_id,
-                "DB_HOST": os.getenv("DB_HOST"),
-                "DB_PORT": os.getenv("DB_PORT", "5432"),
-                "DB_USERNAME": os.getenv("DB_USERNAME"),
-                "DB_PASSWORD": os.getenv("DB_PASSWORD"),
-                "DB_DATABASE": os.getenv("DB_DATABASE"),
             }
             return [PodManager.save(
                 SavePodDataClass(
@@ -387,7 +372,7 @@ class KubernetesContainerManager(ContainerManager):
 
         # Not a bare pod: fall back to service / ingress exposed containers. These are resolved by
         # the stored kubernetes_id (legacy behaviour) and save all the pods they route to.
-        kubernetes_id: str | None = container_row.data.get("kubernetes_id")
+        kubernetes_id: str | None = container_row_data.get("kubernetes_id")
         service: dict | None = (
             KubernetesContainerHelper.check_service(namespace_name=data.network_name, container_id=kubernetes_id)
             if kubernetes_id else None
