@@ -54,6 +54,15 @@ spec:
         app: container-maker
     spec:
       serviceAccountName: resources-sa
+      # See browseterm-server-local/infra/deployment/deployment.yaml's identical hostAliases
+      # block: on a single-Mac two-cluster local dev setup, BROWSETERM_CLOUD_API_URL's hostname
+      # resolves inside this cluster's own pods to the Mac's own /etc/hosts mapping (127.0.0.1,
+      # for the developer's browser), not the real Cloud cluster - required for this container's
+      # Cloud API calls (src/cloud_client.py) to work at all from inside browseterm-k3s-local.
+      hostAliases:
+      - ip: "${CLOUD_INGRESS_HOST_IP}"
+        hostnames:
+        - "${CLOUD_INGRESS_HOST}"
       containers:
       - name: container-maker
         # PROD: baked image pulled from the registry (no hostPath live-mount, no dev tag).
