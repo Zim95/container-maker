@@ -39,7 +39,7 @@ from src.resources.dataclasses.service.delete_service_dataclass import DeleteSer
 from src.resources.dataclasses.service.get_service_dataclass import GetServiceDataClass
 from src.resources.dataclasses.service.list_service_dataclass import ListServiceDataClass
 from src.resources.namespace_manager import NamespaceManager
-from src.resources.pod_manager import PodManager
+from src.resources.pod_manager import PodManager, USER_POD_CONTAINER_ID_LABEL
 from src.resources.service_manager import ServiceManager
 from src.resources.ingress_manager import IngressManager
 from src.containers import ContainerManager
@@ -64,6 +64,51 @@ class KubernetesContainerHelper:
         for pod in pods:
             if container_id == pod['pod_id']:
                 return pod
+        return None
+
+    @classmethod
+    def find_pod_by_db_id(cls, namespace_name: str, db_container_id: str) -> dict | None:
+        '''
+        Resolve the live pod for a container by the stable `browseterm/container-id` label
+        (USER_POD_CONTAINER_ID_LABEL) - the DB row's own id, stamped on the pod at
+        both creation AND resume time (both always set CONTAINER_ID in the pod's environment
+        variables to the DB id; see pod_manager.py's own comment: "so the central status_monitor
+        can map this pod back to its row without any per-pod env"). Unlike the pod's own
+        Kubernetes UID (`pod_id`, what `check_pod` above matches on) or its generated name (both
+        change on every resume-triggered recreate), the DB id is permanent for this container's
+        entire lifetime - this is the one identifier that's genuinely never stale.
+
+        Refuses to guess if more than one pod somehow carries the same label value (should never
+        happen - DB ids are unique - but matches find_container_pod's own "don't guess" rule for
+        an equivalent ambiguity, rather than silently picking one).
+        '''
+        pods: list = PodManager.list(ListPodDataClass(**{'namespace_name': namespace_name}))
+        matches: list = [
+            pod for pod in pods
+            if (pod.get('pod_labels') or {}).get(USER_POD_CONTAINER_ID_LABEL) == db_container_id
+        ]
+        if len(matches) > 1:
+            raise Exception(
+                f"Cannot uniquely resolve the pod for container id={db_container_id} in "
+                f"namespace={namespace_name}: {len(matches)} pods carry that same "
+                f"{USER_POD_CONTAINER_ID_LABEL} label."
+            )
+        return matches[0] if matches else None
+
+    @classmethod
+    def find_service_for_pod(cls, namespace_name: str, pod: dict) -> dict | None:
+        '''
+        Resolve the Service routing to a given pod, using the SAME selector-matching
+        ServiceManager.get_service_response already computes for every service's own
+        `associated_resources` (see service_manager.py) - no separate label needed on the
+        Service itself, this just reuses that existing pod<->service relationship instead of
+        re-deriving it from an id that could itself be stale.
+        '''
+        services: list = ServiceManager.list(ListServiceDataClass(**{'namespace_name': namespace_name}))
+        for service in services:
+            associated = service.get('associated_resources') or []
+            if any(p.get('pod_id') == pod.get('pod_id') for p in associated):
+                return service
         return None
 
     @classmethod
@@ -513,28 +558,32 @@ class KubernetesContainerManager(ContainerManager):
     def delete(cls, data: DeleteContainerDataClass) -> dict:
         '''
         Delete a container.
-        Check the id of the container.
+
+        `data.container_id` is the container's own DATABASE id (the same convention `save()`
+        already uses - see that method's docstring), NOT the pod's Kubernetes UID. This changed
+        from the original design (below), which resolved the pod/service/ingress by matching
+        their own live Kubernetes UIDs against a UID the CALLER supplied - almost always the
+        `kubernetes_id` value cached in the DB row at creation time. That cached value is exactly
+        as unreliable for delete as it was already known to be for save (see find_container_pod's
+        docstring: "historically unreliable... can be wrong from creation or stale after a pod is
+        recreated") - a resume recreates the pod with a brand-new UID, and a stale/wrong cached
+        UID simply never matches any live pod. The old code's failure mode on a non-match was
+        silent: no pod found -> nothing deleted -> still returns {'status': 'Deleted'} regardless,
+        so a resumed-then-deleted container's pod could be orphaned forever with no error anywhere
+        - exactly the kind of leak that eventually exhausts a namespace's ResourceQuota for
+        reasons that don't match what anyone deleted through the UI. The pod is now resolved via
+        `find_pod_by_db_id` - the `browseterm/container-id` label, stamped at both create AND
+        resume time from the DB id, which never changes for this container's whole lifetime. The
+        Service is then resolved from the FOUND pod (find_service_for_pod, via the same
+        selector<->pod-label relationship ServiceManager already computes for every service's own
+        `associated_resources`), not from a second independent id guess.
+
+        Original design notes on why ids over names, and the delete order, preserved below since
+        they still describe the actual shape of the work (just not the resolution mechanism):
+
         Question: Why are we using ids instead of names? We can directly get resources using names.
         - We can have duplicate names, but not duplicate ids.
         - Imagine a pod and a service having the same name and you delete the pod instead of the service.
-        
-        INITIAL APPROACH:
-        -----------------
-        Deletion should be done in a heirarchical manner.
-            - If we delete a pod, the service and ingress associated with it are useless. So we need to delete all of them.
-            - If we delete a service, the ingress associated with it is useless. So we need to delete services. But the pod can still exist.
-            - If we delete an ingress, the service and pod associated with it can still exist. So only delete ingress.
-        In brief,
-        - pod: Delete pod, associated service and associated ingress. Go up the heirarchy.
-        - service: Delete service and associated ingress.
-        - ingress: Delete ingress, associated services and associated pods.
-
-        IMPROVEMENT:
-        ------------
-        1. A service can be associated to many pods. Not just a single pod. So its not fair to delete the service,
-            just because we deleted one of the pods it was associated to. Same with ingress.
-        2. So now, we delete pod or ingress or service.
-        3. Then we delete all lingering resources. i.e. services with no pods associated, ingresses with no services associated.
 
         ACTUAL APPROACH:
         ---------------
@@ -543,21 +592,25 @@ class KubernetesContainerManager(ContainerManager):
         3. This means when the ingress container is deleted, all associated resources should also be deleted.
             Because the container is a whole, i.e. ingress + service + pod.
         4. We should however, delete the lingering resources if there are any, but as it is, thats how things should be.
+
+        Ingress is left resolved by the old raw-id match (`check_ingress`) - browseterm's own
+        containers are always created at exposure_level=CLUSTER_LOCAL (no ingress involved at
+        all), so this path is legacy/unexercised for this project's actual usage either way, and
+        an ingress_id was never the same value space as a DB id to begin with.
         '''
         try:
             namespace: dict = NamespaceManager.get(GetNamespaceDataClass(namespace_name=data.network_name))
             if not namespace:
                 return {'container_id': data.container_id, 'status': f'Network: {data.network_name} does not exist.'}
-            pod: dict | None = KubernetesContainerHelper.check_pod(
-                namespace_name=data.network_name, container_id=data.container_id)
+            pod: dict | None = KubernetesContainerHelper.find_pod_by_db_id(
+                namespace_name=data.network_name, db_container_id=data.container_id)
             if pod:
+                service: dict | None = KubernetesContainerHelper.find_service_for_pod(
+                    namespace_name=data.network_name, pod=pod)
                 KubernetesContainerHelper.delete_pod(namespace_name=data.network_name, pod_name=pod['pod_name'])
-
-            service: dict | None = KubernetesContainerHelper.check_service(
-                namespace_name=data.network_name, container_id=data.container_id)
-            if service:
-                KubernetesContainerHelper.delete_service(
-                    namespace_name=data.network_name, service_name=service['service_name'])
+                if service:
+                    KubernetesContainerHelper.delete_service(
+                        namespace_name=data.network_name, service_name=service['service_name'])
 
             ingress: dict | None = KubernetesContainerHelper.check_ingress(
                 namespace_name=data.network_name, container_id=data.container_id)

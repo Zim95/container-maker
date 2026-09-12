@@ -161,7 +161,11 @@ class TestDeleteContainer(TestCase):
         
         KubernetesContainerManager.delete(DeleteContainerDataClass(
             network_name=self.namespace_name,
-            container_id=exposed_container['container_id'],
+            # The DB id (see delete()'s own docstring) - stamped as the pod's
+            # browseterm/container-id label from environment_variables['CONTAINER_ID'] above, NOT
+            # exposed_container['container_id'] (the pod's own Kubernetes UID, a different value
+            # space entirely now that delete() no longer trusts a raw UID match).
+            container_id=self.environment_variables["CONTAINER_ID"],
         ))
         # list all resources again
         final_pods: list = PodManager.list(ListPodDataClass(**{'namespace_name': self.namespace_name}))

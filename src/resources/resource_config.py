@@ -34,25 +34,40 @@ USER_POD_RUNTIME_CLASS: str | None = os.getenv("USER_POD_RUNTIME_CLASS", "").str
 # so these numbers are the *current* entitlement, NOT a permanent ceiling — resizing a user up/down
 # is "pick a different tier and re-apply".
 #
-# NOTE: placeholder values here are sensible starting points; the real numbers will be driven by the
-# subscription/payments service (Go) once it lands. The tier name will come from the user's plan.
+# Subscriptions/payments are disabled project-wide for now (browseterm-server-local's app.py:
+# "we don't need subscriptions for now"), and there has never actually been a gRPC field to select
+# a tier at all (CreateNamespaceDataClass.tier defaults to "free" and nothing overrides it) - every
+# namespace this project has ever created was silently pinned to the numbers below, forever,
+# regardless of the owning device's real capacity. Terminal creation is meant to be gated ONLY by
+# the active device's own remaining resource quota now (Cloud's POST /containers, which validates
+# against allocated-minus-used capacity) - this ResourceQuota/LimitRange is meant to be a coarse,
+# generous per-tenant safety ceiling underneath that (protects a shared cluster from one runaway
+# tenant), not an independent, tighter limit a legitimately-sized request could still hit. The
+# original "free" numbers here (2 CPU / 2Gi / 4 pods total) were sized as a billing tier's cheapest
+# plan, not as that safety ceiling - on a real device with more than ~2 cores/2Gi worth of
+# containers, or even a single container requesting more than 1 core (the old
+# MAX_CPU_PER_CONTAINER), Cloud would approve the request and this K8s-level quota would then
+# reject it anyway with a raw "exceeded quota" API error - which is exactly the "still says you've
+# exceeded your plan's quota" behavior reported after subscription gating was removed elsewhere.
+# Raised well above what a real device's allocation is expected to need; "pro" below is currently
+# unreachable dead code (no caller can select it) and is left as-is.
 DEFAULT_TIER: str = os.getenv("DEFAULT_TIER", "free")
 
 TIERS: Dict[str, Dict[str, str]] = {
     "free": {
-        "MAX_PODS": "4",                 # 1 workspace pod (+ headroom for a snapshot job / recreate overlap)
-        "MAX_PVCS": "2",
-        "TOTAL_STORAGE": "20Gi",
-        "TOTAL_CPU_REQUESTS": "1",
-        "TOTAL_CPU_LIMITS": "2",
-        "TOTAL_MEMORY_REQUESTS": "1Gi",
-        "TOTAL_MEMORY_LIMITS": "2Gi",
+        "MAX_PODS": "12",
+        "MAX_PVCS": "8",
+        "TOTAL_STORAGE": "200Gi",
+        "TOTAL_CPU_REQUESTS": "16",
+        "TOTAL_CPU_LIMITS": "32",
+        "TOTAL_MEMORY_REQUESTS": "16Gi",
+        "TOTAL_MEMORY_LIMITS": "64Gi",
         "DEFAULT_REQUEST_CPU": "100m",
         "DEFAULT_REQUEST_MEMORY": "128Mi",
         "DEFAULT_CPU": "500m",
         "DEFAULT_MEMORY": "512Mi",
-        "MAX_CPU_PER_CONTAINER": "1",
-        "MAX_MEMORY_PER_CONTAINER": "2Gi",
+        "MAX_CPU_PER_CONTAINER": "8",
+        "MAX_MEMORY_PER_CONTAINER": "32Gi",
     },
     "pro": {
         "MAX_PODS": "8",
