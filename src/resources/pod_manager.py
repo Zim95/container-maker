@@ -647,13 +647,25 @@ class PodManager(KubernetesResourceManager):
         Get the pod response.
         :params: pod: V1Pod
         :returns: dict: Pod Details
+
+        pod_ip is read directly off the V1Pod object already in hand - it used to call the
+        blocking, timeout-raising get_pod_ip() here instead, which made this function (shared by
+        list()/get(), not just create()) block for up to POD_IP_TIMEOUT_SECONDS and then RAISE
+        outright if that pod - or any OTHER pod the same list() call happened to return - hadn't
+        been assigned an IP yet. A real bug caught live in production: a pod stuck in
+        ContainerCreating (a sandbox-runtime failure, unrelated to this) made every list()-backed
+        lookup in its namespace fail, including find_pod_by_db_id's own DELETE lookup - so the one
+        operation you'd most want to work on a broken pod (delete it) failed too, with "Timeout
+        waiting for pod ... IP address after 20.0 seconds". create() still gets a genuine,
+        deliberate wait for IP readiness - see its own call to get_pod_ip() below - because
+        that's the one caller that actually needs to guarantee it's populated before returning.
         '''
         return {
             'resource_type': 'pod',
             'pod_id': pod.metadata.uid,
             'pod_name': pod.metadata.name,
             'pod_namespace': pod.metadata.namespace,
-            'pod_ip': cls.get_pod_ip(pod.metadata.namespace, pod.metadata.name),
+            'pod_ip': pod.status.pod_ip or '',
             'pod_ports': cls.get_pod_ports(pod),
             'pod_labels': pod.metadata.labels or {},
             'associated_resources': cls.get_pod_containers(pod),
@@ -1018,10 +1030,16 @@ class PodManager(KubernetesResourceManager):
                 )
             )
             # create the actual pod
-            pod: V1Pod = cls.client.create_namespaced_pod(data.namespace_name, pod_manifest)
+            cls.client.create_namespaced_pod(data.namespace_name, pod_manifest)
             # wait for the pod status to be running
             cls.poll_status(namespace_name=data.namespace_name, pod_name=data.pod_name, target_status='Running')
-            return cls.get_pod_response(pod)
+            # get_pod_response now reads pod_ip directly off whatever V1Pod object it's given
+            # (see its own docstring) rather than making its own blocking call - so the create
+            # path's genuine need to guarantee the IP is populated before returning has to be
+            # explicit here: wait for it, then re-read the pod fresh so get_pod_response sees it.
+            cls.get_pod_ip(data.namespace_name, data.pod_name)
+            fresh_pod: V1Pod = cls.client.read_namespaced_pod(name=data.pod_name, namespace=data.namespace_name)
+            return cls.get_pod_response(fresh_pod)
         except TimeoutError as te:
             raise TimeoutError(te) from te
         except ApiException as ae:
