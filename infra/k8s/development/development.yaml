@@ -95,10 +95,19 @@ spec:
             secretKeyRef:
               name: container-maker-development-service-certs
               key: ca.crt
+        # Docker Hub credentials the snapshot Job pushes saved images under (see pod_manager.py) -
+        # a real secret, not a templated literal. See deployment.yaml's identical block for the
+        # kubectl create secret command.
         - name: REPO_NAME
-          value: ${REPO_NAME}
+          valueFrom:
+            secretKeyRef:
+              name: container-maker-repo-credentials
+              key: REPO_NAME
         - name: REPO_PASSWORD
-          value: ${REPO_PASSWORD}
+          valueFrom:
+            secretKeyRef:
+              name: container-maker-repo-credentials
+              key: REPO_PASSWORD
         - name: INGRESS_HOST
           value: ${INGRESS_HOST}
         - name: STORAGE_LAYER

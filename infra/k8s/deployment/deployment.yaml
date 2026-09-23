@@ -106,10 +106,22 @@ spec:
             secretKeyRef:
               name: container-maker-service-certs
               key: ca.crt
+        # Docker Hub credentials the snapshot Job pushes saved images under (see pod_manager.py) -
+        # a real secret, not a templated literal (kubectl get deployment -o yaml would otherwise
+        # print it in plain text). Create with:
+        #   kubectl create secret generic container-maker-repo-credentials \
+        #     --from-literal=REPO_NAME=<docker-hub-username> \
+        #     --from-literal=REPO_PASSWORD=<docker-hub-password-or-token> -n <namespace>
         - name: REPO_NAME
-          value: ${REPO_NAME}
+          valueFrom:
+            secretKeyRef:
+              name: container-maker-repo-credentials
+              key: REPO_NAME
         - name: REPO_PASSWORD
-          value: ${REPO_PASSWORD}
+          valueFrom:
+            secretKeyRef:
+              name: container-maker-repo-credentials
+              key: REPO_PASSWORD
         # Sandbox USER pods (the untrusted root shells) under gVisor. PROD = single-node k3s, where
         # setup.k3s.sh installs runsc and deploy.k3s.sh registers the `gvisor` RuntimeClass. Only user
         # pods carry this class; this control-plane pod stays runc. (Dev/docker-desktop leaves this
