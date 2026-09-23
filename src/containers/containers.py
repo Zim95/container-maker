@@ -137,13 +137,20 @@ class KubernetesContainerHelper:
     @classmethod
     def _sanitize_name(cls, name: str) -> str:
         '''
-        Mirror browseterm-server's sanitize_container_name so we can match a pod's `app` label:
-        lowercase, spaces/underscores -> hyphens, drop anything that isn't [a-z0-9-].
+        Kubernetes resource names (pod/service/ingress `metadata.name`, container `name`) must be
+        RFC 1123 DNS labels: lowercase alphanumeric or '-', starting and ending with an
+        alphanumeric character. Cloud's own container name is a free-form, user-chosen display
+        string (e.g. "namah_ssh_ubuntu_test") with no such constraint - this is the one place
+        that gap gets closed before any k8s-facing identifier is built from it. Also used to
+        recompute the expected `app` label when matching an existing pod (find_container_pod),
+        so create() and lookup must always sanitize the exact same way.
         '''
         import re
         lowered: str = (name or '').strip().lower()
         hyphenated: str = lowered.replace(' ', '-').replace('_', '-')
-        return re.sub(r'[^a-z0-9-]', '', hyphenated)
+        sanitized: str = re.sub(r'[^a-z0-9-]', '', hyphenated)
+        sanitized = re.sub(r'^-+|-+$', '', sanitized)
+        return sanitized or 'container'
 
     @classmethod
     def _stored_pod_name(cls, container_row_data: dict) -> str | None:
@@ -475,6 +482,15 @@ class KubernetesContainerManager(ContainerManager):
             NamespaceManager.create(CreateNamespaceDataClass(namespace_name=data.network_name))
             cls.validate_publish_information(data.publish_information)
             final_container: dict = {}
+            # Cloud's container name is a free-form, user-chosen display string (spaces,
+            # underscores, mixed case all allowed) with no Kubernetes naming constraint of its
+            # own - sanitize once here, before it's used to build ANY k8s-facing identifier
+            # below, rather than relying on the caller to have already done it. A real bug this
+            # fixes: a name like "namah_ssh_ubuntu_test" reached Kubernetes verbatim and every
+            # create attempt failed with "a lowercase RFC 1123 subdomain must consist of..." -
+            # Container Maker already had _sanitize_name for matching an existing pod's `app`
+            # label (find_container_pod's fallback), but nothing called it at creation time.
+            container_name: str = KubernetesContainerHelper._sanitize_name(data.container_name)
             # create the pod.
             resource_requirements: ResourceRequirementsDataClass = ResourceRequirementsDataClass(
                 cpu_request=data.resource_requirements.cpu_request,
@@ -490,8 +506,8 @@ class KubernetesContainerManager(ContainerManager):
             timestamp: str = generate_timestamp_suffix()
             pod: dict = PodManager.create(CreatePodDataClass(
                 image_name=data.image_name,
-                pod_name=f'{data.container_name}-pod-{timestamp}',
-                container_name=data.container_name,  # Base name for labels (no timestamp)
+                pod_name=f'{container_name}-pod-{timestamp}',
+                container_name=container_name,  # Base name for labels (no timestamp)
                 namespace_name=data.network_name,
                 target_ports={pi.target_port for pi in data.publish_information},
                 environment_variables=data.environment_variables,
@@ -505,8 +521,8 @@ class KubernetesContainerManager(ContainerManager):
                     else ServiceType.CLUSTER_IP
                 )
                 service: dict = ServiceManager.create(CreateServiceDataClass(
-                    service_name=f'{data.container_name}-service-{timestamp}',
-                    pod_label_selector=data.container_name,  # Use base name (no timestamp) for selector
+                    service_name=f'{container_name}-service-{timestamp}',
+                    pod_label_selector=container_name,  # Use base name (no timestamp) for selector
                     namespace_name=data.network_name,
                     publish_information=[
                         PublishInformationDataClass(
@@ -523,8 +539,8 @@ class KubernetesContainerManager(ContainerManager):
             if data.exposure_level.value > ExposureLevel.CLUSTER_EXTERNAL.value:
                 ingress: dict = IngressManager.create(CreateIngressDataClass(
                     namespace_name=data.network_name,
-                    ingress_name=f'{data.container_name}-ingress-{timestamp}',
-                    service_name=f'{data.container_name}-service-{timestamp}',
+                    ingress_name=f'{container_name}-ingress-{timestamp}',
+                    service_name=f'{container_name}-service-{timestamp}',
                     host=config.INGRESS_HOST,
                     service_ports=service['service_ports']
                 ))
