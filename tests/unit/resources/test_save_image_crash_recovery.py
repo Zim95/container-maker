@@ -31,10 +31,11 @@ class TestSaveImageCrashRecoveryWiring(TestCase):
     immediately with the (deterministic, repo-prefixed) image name -- it does NOT block on Job
     completion. The wait-then-patch-pod-image work (SaveUtility._wait_and_patch_pod_image) is
     handed to its own background thread instead, so it must point the pod's MAIN container at
-    the saved image via PodManager._update_pod_image once the Job succeeds, and must swallow
-    (not re-raise) a Job failure without patching -- there is no caller to raise to, and Job
-    failure is already recorded in the DB by the Job itself or the save reconciler. We mock the
-    client check, tar build, JobManager, and _update_pod_image throughout, and stand in for
+    the REAL saved image (read back from Cloud's containers.saved_image, not guessed) via
+    PodManager._update_pod_image once the Job succeeds, and must swallow (not re-raise) a Job
+    failure without patching -- there is no caller to raise to, and Job failure is already
+    recorded in the DB by the Job itself or the save reconciler. We mock the client check, tar
+    build, JobManager, CloudClient, and _update_pod_image throughout, and stand in for
     threading.Thread with a synchronous fake so assertions don't race a real thread.
     '''
 
@@ -42,19 +43,21 @@ class TestSaveImageCrashRecoveryWiring(TestCase):
         print('Test: setUp TestSaveImageCrashRecoveryWiring')
         self.namespace_name: str = 'test-namespace'
         self.pod_name: str = 'testc-pod-123'
+        self.container_id: str = 'db-id-1'
         self.data: SavePodDataClass = SavePodDataClass(
             pod_name=self.pod_name,
             namespace_name=self.namespace_name,
             environment_variables={
-                'CONTAINER_ID': 'db-id-1',
+                'CONTAINER_ID': self.container_id,
                 'DB_HOST': 'h', 'DB_PORT': '5432',
                 'DB_USERNAME': 'u', 'DB_PASSWORD': 'p', 'DB_DATABASE': 'd',
             },
         )
 
-    def _invoke(self, wait_side_effect=None):
+    def _invoke(self, wait_side_effect=None, saved_image='zim95/browseterm:u_x_c_y_v_0.0.0.0.1'):
         mock_update = MagicMock(return_value=None)
         mock_wait = MagicMock(return_value={'status': 'succeeded'}, side_effect=wait_side_effect)
+        mock_get_container = MagicMock(return_value={'saved_image': saved_image})
         with patch.object(SaveUtility, 'check_kubernetes_client', return_value=None), \
              patch.object(SaveUtility, 'build_tar', return_value='snapshots/testc-pod-123'), \
              patch('src.resources.pod_manager.REPO_NAME', 'myrepo'), \
@@ -64,23 +67,31 @@ class TestSaveImageCrashRecoveryWiring(TestCase):
                    return_value={'namespace_name': self.namespace_name,
                                  'job_name': f'{self.pod_name}-snapshot-job'}), \
              patch('src.resources.job_manager.JobManager.wait_for_job_completion', mock_wait), \
+             patch('src.resources.pod_manager.CloudClient.get_container', mock_get_container), \
              patch('src.resources.pod_manager.PodManager._update_pod_image', mock_update):
             result: dict = SaveUtility.save_image(self.data)
         return result, mock_update, mock_wait
 
     def test_returns_repo_prefixed_saved_image(self) -> None:
+        '''The RPC's own immediate response still carries the deterministic guess - Device
+        Agent's save_execution.py never trusts this as authoritative, only as a log/pod_name
+        source, and polls Cloud's confirmed save-status for the real reference instead.'''
         print('Test: test_returns_repo_prefixed_saved_image')
         result, _, _ = self._invoke()
         self.assertEqual(result['image_name'], f'myrepo/{self.pod_name}-image:latest')
 
-    def test_points_main_container_at_saved_image_for_crash_recovery(self) -> None:
-        print('Test: test_points_main_container_at_saved_image_for_crash_recovery')
-        _, mock_update, _ = self._invoke()
+    def test_points_main_container_at_real_saved_image_for_crash_recovery(self) -> None:
+        '''Regression: this used to patch the pod with the guessed (never-actually-pushed)
+        deterministic name - a real production incident where a live pod got corrupted with a
+        nonexistent image and permanently ImagePullBackOff'd on its next unrelated restart. Must
+        use Cloud's own confirmed containers.saved_image instead.'''
+        print('Test: test_points_main_container_at_real_saved_image_for_crash_recovery')
+        _, mock_update, _ = self._invoke(saved_image='zim95/browseterm:u_x_c_y_v_0.0.0.0.1')
         mock_update.assert_called_once()
         kwargs = mock_update.call_args.kwargs
         self.assertEqual(kwargs['namespace_name'], self.namespace_name)
         self.assertEqual(kwargs['pod_name'], self.pod_name)
-        self.assertEqual(kwargs['image_name'], f'myrepo/{self.pod_name}-image:latest')
+        self.assertEqual(kwargs['image_name'], 'zim95/browseterm:u_x_c_y_v_0.0.0.0.1')
 
     def test_skips_pod_image_patch_when_job_fails(self) -> None:
         '''If the Job fails/times out, the background finalize step must swallow the exception
@@ -92,6 +103,13 @@ class TestSaveImageCrashRecoveryWiring(TestCase):
         mock_wait.assert_called_once()
         mock_update.assert_not_called()
 
+    def test_skips_pod_image_patch_when_cloud_has_no_saved_image_yet(self) -> None:
+        '''The Job succeeded but Cloud hasn't recorded saved_image yet (a race, or report call
+        failed) - must not guess a reference, just skip the patch.'''
+        print('Test: test_skips_pod_image_patch_when_cloud_has_no_saved_image_yet')
+        _, mock_update, _ = self._invoke(saved_image=None)
+        mock_update.assert_not_called()
+
 
 class TestWaitAndPatchPodImage(TestCase):
     '''
@@ -99,19 +117,22 @@ class TestWaitAndPatchPodImage(TestCase):
     save_image/threading entirely -- exercises the finalize step's own logic in isolation.
     '''
 
-    def test_waits_then_patches_on_success(self) -> None:
-        print('Test: test_waits_then_patches_on_success')
+    def test_waits_then_patches_with_clouds_real_saved_image(self) -> None:
+        print('Test: test_waits_then_patches_with_clouds_real_saved_image')
         mock_wait = MagicMock(return_value={'status': 'succeeded'})
         mock_update = MagicMock(return_value=None)
+        mock_get_container = MagicMock(return_value={'saved_image': 'repo/real-pushed-ref:v1'})
         with patch('src.resources.job_manager.JobManager.wait_for_job_completion', mock_wait), \
+             patch('src.resources.pod_manager.CloudClient.get_container', mock_get_container), \
              patch('src.resources.pod_manager.PodManager._update_pod_image', mock_update):
             SaveUtility._wait_and_patch_pod_image(
                 job_namespace='browseterm', job_name='some-job',
-                pod_namespace='ns', pod_name='pod-1', image_name='repo/pod-1-image:latest',
+                pod_namespace='ns', pod_name='pod-1', container_id='container-1',
             )
         mock_wait.assert_called_once_with(namespace_name='browseterm', job_name='some-job')
+        mock_get_container.assert_called_once_with('container-1')
         mock_update.assert_called_once_with(
-            namespace_name='ns', pod_name='pod-1', image_name='repo/pod-1-image:latest',
+            namespace_name='ns', pod_name='pod-1', image_name='repo/real-pushed-ref:v1',
         )
 
     def test_swallows_wait_failure_without_patching(self) -> None:
@@ -123,6 +144,20 @@ class TestWaitAndPatchPodImage(TestCase):
             # must not raise -- there is no caller to catch it, this runs as a thread target
             SaveUtility._wait_and_patch_pod_image(
                 job_namespace='browseterm', job_name='some-job',
-                pod_namespace='ns', pod_name='pod-1', image_name='repo/pod-1-image:latest',
+                pod_namespace='ns', pod_name='pod-1', container_id='container-1',
+            )
+        mock_update.assert_not_called()
+
+    def test_skips_patch_when_cloud_container_lookup_returns_none(self) -> None:
+        '''A 404 (container deleted mid-save) - get_container returns None, not a dict.'''
+        print('Test: test_skips_patch_when_cloud_container_lookup_returns_none')
+        mock_update = MagicMock(return_value=None)
+        with patch('src.resources.job_manager.JobManager.wait_for_job_completion',
+                   return_value={'status': 'succeeded'}), \
+             patch('src.resources.pod_manager.CloudClient.get_container', return_value=None), \
+             patch('src.resources.pod_manager.PodManager._update_pod_image', mock_update):
+            SaveUtility._wait_and_patch_pod_image(
+                job_namespace='browseterm', job_name='some-job',
+                pod_namespace='ns', pod_name='pod-1', container_id='container-1',
             )
         mock_update.assert_not_called()

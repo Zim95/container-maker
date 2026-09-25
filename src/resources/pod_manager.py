@@ -19,7 +19,8 @@ from src.common.logging_setup import get_logger
 from src.resources.resource_config import POD_IP_TIMEOUT_SECONDS, POD_UPTIME_TIMEOUT, POD_TERMINATION_TIMEOUT, CONTAINER_READINESS_TIMEOUT_SECONDS, IMAGE_BUILD_TIMEOUT_MINUTES
 from src.resources.resource_config import SNAPSHOT_DIR, SNAPSHOT_FILE_NAME
 from src.resources.resource_config import USER_POD_RUNTIME_CLASS
-from src.common.config import REPO_NAME, REPO_PASSWORD
+from src.common.config import REPO_NAME, REPO_PASSWORD, BROWSETERM_CLOUD_API_URL, CLOUD_INTERNAL_API_TOKEN
+from src.cloud_client import CloudClient
 from browseterm_storage import StorageLayer, get_storage
 
 # third party
@@ -468,11 +469,17 @@ class SaveUtility(KubernetesResourceManager):
                 storage_env_vars=storage_env_vars
             )
 
-            # The tag is deterministic (repo + pod name, not content-addressed), so it's known
-            # right now — no need to wait for the build to report it back. NOTE: must match what
-            # the snapshot Job actually pushes (and writes to saved_image): {REPO_NAME}/
-            # {pod_name}-image:latest. Without the repo prefix the kubelet can't pull it
-            # (ImagePullBackOff), which previously broke the live terminal on every save.
+            # NOTE (fixed 2026-09-25): this used to guess the pushed reference as the
+            # deterministic f'{repo_name}/{data.pod_name}-image:latest' - that matched the OLD
+            # pre-Part-19 tagging scheme, but Part 19 moved every snapshot to one fixed repository
+            # with an immutable, Cloud-allocated per-attempt tag (image_repository:image_tag, e.g.
+            # "zim95/browseterm:u_<user_id>_c_<container_id>_v_<version>"), which this guess was
+            # never updated to match. The guessed image was never real - nothing was ever pushed
+            # to it - so _wait_and_patch_pod_image now reads the REAL confirmed saved_image back
+            # from Cloud after the Job succeeds, instead of guessing here. Caught live: a save
+            # patched a real running pod's image to this guessed, nonexistent reference, and the
+            # next unrelated container restart (crash, node churn, anything) then hit permanent
+            # ImagePullBackOff trying to pull it - taking down an otherwise-healthy container.
             image_name = f'{repo_name}/{data.pod_name}-image:latest'
 
             # Step 3: hand the wait-then-patch-pod-image work to a dedicated thread, off the
@@ -484,7 +491,7 @@ class SaveUtility(KubernetesResourceManager):
                     'job_name': job_info['job_name'],
                     'pod_namespace': data.namespace_name,
                     'pod_name': data.pod_name,
-                    'image_name': image_name,
+                    'container_id': container_id,
                 },
                 daemon=True,
                 name=f"save-finalize-{data.pod_name}",
@@ -508,11 +515,17 @@ class SaveUtility(KubernetesResourceManager):
             raise Exception(f'Save pod error occured: {str(e)}') from e
 
     @classmethod
-    def _wait_and_patch_pod_image(cls, job_namespace: str, job_name: str, pod_namespace: str, pod_name: str, image_name: str) -> None:
+    def _wait_and_patch_pod_image(cls, job_namespace: str, job_name: str, pod_namespace: str, pod_name: str, container_id: str) -> None:
         '''
         Runs on its own background thread (started by save_image, NOT the shared gRPC worker
         pool). Waits for the snapshot Job to finish and, only on success, patches the live pod's
         image definition so a future in-place crash restarts it from the new snapshot.
+
+        The real pushed reference is read back from Cloud's own containers.saved_image (which the
+        Job itself reports via report_snapshot_result on success) rather than guessed here - see
+        save_image's own comment for the real incident this fixes: a guessed, never-actually-
+        pushed reference silently corrupted a live pod's spec, and any later unrelated restart hit
+        permanent ImagePullBackOff pulling an image that was never real.
 
         Never raises to its caller (there is no caller — it's a thread target): a failed or
         timed-out Job already gets Failed recorded in the DB by the Job's own process, or by the
@@ -523,7 +536,18 @@ class SaveUtility(KubernetesResourceManager):
             from src.resources.job_manager import JobManager
             logger.info("waiting for snapshot job to complete", extra={"pod_name": pod_name, "namespace_name": pod_namespace, "job_name": job_name})
             JobManager.wait_for_job_completion(namespace_name=job_namespace, job_name=job_name)
-            logger.info("snapshot job completed successfully", extra={"pod_name": pod_name, "namespace_name": pod_namespace, "image_name": image_name})
+            logger.info("snapshot job completed successfully", extra={"pod_name": pod_name, "namespace_name": pod_namespace})
+
+            cloud_client = CloudClient(BROWSETERM_CLOUD_API_URL, CLOUD_INTERNAL_API_TOKEN)
+            container = cloud_client.get_container(container_id)
+            image_name = container.get("saved_image") if container else None
+            if not image_name:
+                logger.warning(
+                    "snapshot job succeeded but Cloud has no saved_image yet - skipping crash-recovery "
+                    "pod-image patch rather than guessing a reference that may not exist",
+                    extra={"pod_name": pod_name, "namespace_name": pod_namespace, "container_id": container_id},
+                )
+                return
 
             # Point the pod's main container at the saved image, so if it CRASHES the kubelet
             # restarts it from the snapshot immediately (in-place crash recovery). Deliberate
