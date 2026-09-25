@@ -67,7 +67,12 @@ spec:
       - name: container-maker
         # PROD: baked image pulled from the registry (no hostPath live-mount, no dev tag).
         image: ${REPO_NAME}/container-maker:latest
-        imagePullPolicy: IfNotPresent
+        # Always, not IfNotPresent (2026-09-25): a `:latest` tag makes IfNotPresent a real bug,
+        # not just a slower default - once any image with this tag is cached on the node, a
+        # rebuilt+pushed image is never re-pulled no matter how many times the Deployment is
+        # restarted. Same fix already applied to socket-ssh/browseterm-device-agent's manifests
+        # for the identical reason.
+        imagePullPolicy: Always
         ports:
         - containerPort: 50052  # gRPC port the server actually listens on
         resources:
