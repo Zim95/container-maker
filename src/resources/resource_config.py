@@ -26,6 +26,18 @@ SERVICE_CIDR: str = os.getenv("SERVICE_CIDR", "10.43.0.0/16")
 # setup.k3s.sh installs runsc + registers the `gvisor` RuntimeClass) sets this to "gvisor".
 USER_POD_RUNTIME_CLASS: str | None = os.getenv("USER_POD_RUNTIME_CLASS", "").strip() or None
 
+# Real bug caught live 2026-09-26: a user pod's own base image (e.g. zim95/ssh_ubuntu) is public,
+# so no pod has ever needed pull credentials before now - but a SAVED/RESUMED snapshot image
+# (Part 19's SNAPSHOT_REGISTRY_REPO_PREFIX, e.g. zim95/browseterm) lives in a PRIVATE repository
+# under the same Docker Hub account snapshot_job already pushes to with REPO_NAME/REPO_PASSWORD.
+# Nothing ever created a pull secret for it, so the first real Save -> in-place image patch
+# (pod_manager.py's _wait_and_patch_pod_image) hit a real, reproduced ImagePullBackOff
+# ("insufficient_scope: authorization failed") the moment it tried to pull the now-private image.
+# NamespaceManager._apply_image_pull_secret creates this Secret in every user namespace; every
+# user pod's spec references it via image_pull_secrets - harmless/unused for a pull from a public
+# image, load-bearing for a private one.
+USER_POD_IMAGE_PULL_SECRET_NAME: str = os.getenv("USER_POD_IMAGE_PULL_SECRET_NAME", "browseterm-registry-credentials")
+
 # ---------------------------------------------------------------------------------------------
 # Per-tenant resource tiers (ResourceQuota + LimitRange -> user_namespace_quota.yaml).
 #

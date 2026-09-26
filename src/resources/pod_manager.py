@@ -16,7 +16,7 @@ from src.resources.dataclasses.pod.list_pod_dataclass import ListPodDataClass
 from src.resources.dataclasses.pod.save_pod_dataclass import SavePodDataClass
 from src.common.exceptions import UnsupportedRuntimeEnvironment
 from src.common.logging_setup import get_logger
-from src.resources.resource_config import POD_IP_TIMEOUT_SECONDS, POD_UPTIME_TIMEOUT, POD_TERMINATION_TIMEOUT, CONTAINER_READINESS_TIMEOUT_SECONDS, IMAGE_BUILD_TIMEOUT_MINUTES
+from src.resources.resource_config import POD_IP_TIMEOUT_SECONDS, POD_UPTIME_TIMEOUT, POD_TERMINATION_TIMEOUT, CONTAINER_READINESS_TIMEOUT_SECONDS, IMAGE_BUILD_TIMEOUT_MINUTES, USER_POD_IMAGE_PULL_SECRET_NAME
 from src.resources.resource_config import SNAPSHOT_DIR, SNAPSHOT_FILE_NAME
 from src.resources.resource_config import USER_POD_RUNTIME_CLASS
 from src.common.config import REPO_NAME, REPO_PASSWORD, BROWSETERM_CLOUD_API_URL, CLOUD_INTERNAL_API_TOKEN
@@ -37,6 +37,7 @@ from kubernetes.client import V1Volume
 from kubernetes.client import V1EmptyDirVolumeSource
 from kubernetes.client import V1VolumeMount
 from kubernetes.client import V1ResourceRequirements
+from kubernetes.client import V1LocalObjectReference
 from kubernetes.stream import ws_client
 from kubernetes.stream import stream
 
@@ -1050,7 +1051,14 @@ class PodManager(KubernetesResourceManager):
                     # No pod-level privilege: image build/push moved out to the snapshot Job, so nothing
                     # in the user pod needs it anymore.
                     volumes=volumes,
-                    containers=containers
+                    containers=containers,
+                    # Real bug fixed 2026-09-26: a saved/resumed snapshot image lives in a PRIVATE
+                    # repository under the same account snapshot_job pushes to - pulling it without
+                    # credentials failed with "insufficient_scope: authorization failed" the moment a
+                    # real Save's crash-recovery image patch tried to use one. Harmless/unused when
+                    # image_name is the public base image; load-bearing for a private snapshot image.
+                    # NamespaceManager._apply_image_pull_secret creates this Secret in the namespace.
+                    image_pull_secrets=[V1LocalObjectReference(name=USER_POD_IMAGE_PULL_SECRET_NAME)],
                 )
             )
             # create the actual pod

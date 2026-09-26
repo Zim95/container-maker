@@ -1,17 +1,21 @@
 # modules
+import base64
+import json
 import time
 from src.resources.dataclasses.namespace.get_namespace_dataclass import GetNamespaceDataClass
 from src.resources import KubernetesResourceManager
 from src.resources.dataclasses.namespace.create_namespace_dataclass import CreateNamespaceDataClass
 from src.resources.dataclasses.namespace.delete_namespace_dataclass import DeleteNamespaceDataClass
+from src.common.config import REPO_NAME, REPO_PASSWORD
 from src.common.exceptions import UnsupportedRuntimeEnvironment
 from src.common.logging_setup import get_logger
 from src.resources.manifest_loader import render_manifests
-from src.resources.resource_config import POD_CIDR, SERVICE_CIDR, tier_substitutions
+from src.resources.resource_config import POD_CIDR, SERVICE_CIDR, tier_substitutions, USER_POD_IMAGE_PULL_SECRET_NAME
 
 # third party
 from kubernetes.client import V1Namespace
 from kubernetes.client import V1ObjectMeta
+from kubernetes.client import V1Secret
 from kubernetes.client import NetworkingV1Api
 from kubernetes.client import CoreV1Api
 from kubernetes.client.rest import ApiException
@@ -79,6 +83,14 @@ class NamespaceManager(KubernetesResourceManager):
         try:
             ns: dict = cls.get(GetNamespaceDataClass(namespace_name=data.namespace_name))
             if ns:
+                # The namespace already exists (every user's namespace, after their very first
+                # container) - _apply_image_pull_secret still needs to run here, not just on the
+                # brand-new-namespace path below. It shipped after every current user's namespace
+                # was already created, and this create() call is what runs on every single
+                # Create/Resume (containers.py's own create()) - without this, an existing user's
+                # namespace would never pick up the secret at all, since nothing else ever
+                # revisits an already-created namespace. Idempotent either way.
+                cls._apply_image_pull_secret(data.namespace_name)
                 return ns
             namespace: V1Namespace = V1Namespace(
                 metadata=V1ObjectMeta(name=data.namespace_name)
@@ -88,6 +100,9 @@ class NamespaceManager(KubernetesResourceManager):
             cls._apply_network_policies(data.namespace_name)
             # Apply the ResourceQuota + LimitRange for the user's tier (noisy-neighbor / DoS bound).
             cls._apply_resource_limits(data.namespace_name, data.tier)
+            # Real registry pull credentials for a saved/resumed snapshot image - see
+            # USER_POD_IMAGE_PULL_SECRET_NAME's own docstring for the incident this closes.
+            cls._apply_image_pull_secret(data.namespace_name)
             return {
                 'namespace_id': created.metadata.uid,
                 'namespace_name': created.metadata.name
@@ -170,6 +185,47 @@ class NamespaceManager(KubernetesResourceManager):
                     continue
                 raise
         logger.info("applied resource limits", extra={"namespace_name": namespace_name, "tier": tier, "count": len(docs)})
+
+    @classmethod
+    def _apply_image_pull_secret(cls, namespace_name: str) -> None:
+        '''
+        Create (or refresh) the Docker Hub pull-credential Secret every user pod's spec
+        references (see USER_POD_IMAGE_PULL_SECRET_NAME's own docstring for the real incident
+        this fixes: a saved/resumed snapshot image is private, and pulling it failed with
+        "insufficient_scope: authorization failed" because nothing had ever created a pull
+        secret in the user's own namespace before). Uses the exact same REPO_NAME/REPO_PASSWORD
+        credential snapshot_job already authenticates with to push these images in the first
+        place - same account, both directions. Idempotent (create-or-patch), same pattern as
+        _apply_resource_limits.
+        '''
+        if not REPO_NAME or not REPO_PASSWORD:
+            logger.error(
+                "cannot create image pull secret: REPO_NAME/REPO_PASSWORD not configured",
+                extra={"namespace_name": namespace_name},
+            )
+            return
+        auth_b64 = base64.b64encode(f"{REPO_NAME}:{REPO_PASSWORD}".encode()).decode()
+        dockerconfigjson = json.dumps({
+            "auths": {"https://index.docker.io/v1/": {
+                "username": REPO_NAME, "password": REPO_PASSWORD, "auth": auth_b64,
+            }},
+        }).encode()
+        secret = V1Secret(
+            metadata=V1ObjectMeta(name=USER_POD_IMAGE_PULL_SECRET_NAME),
+            type="kubernetes.io/dockerconfigjson",
+            data={".dockerconfigjson": base64.b64encode(dockerconfigjson).decode()},
+        )
+        core_api: CoreV1Api = CoreV1Api()
+        try:
+            core_api.create_namespaced_secret(namespace=namespace_name, body=secret)
+        except ApiException as ae:
+            if ae.status == 409:  # already exists - refresh in case the credential rotated
+                core_api.patch_namespaced_secret(
+                    name=USER_POD_IMAGE_PULL_SECRET_NAME, namespace=namespace_name, body=secret,
+                )
+            else:
+                raise
+        logger.info("applied image pull secret", extra={"namespace_name": namespace_name})
 
     @classmethod
     def poll_termination(cls, namespace_name: str, timeout_seconds: float = 2.0) -> None:
