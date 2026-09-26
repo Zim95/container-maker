@@ -1077,16 +1077,30 @@ class PodManager(KubernetesResourceManager):
     def poll_termination(cls, namespace_name: str, pod_name: str, timeout_seconds: float = POD_TERMINATION_TIMEOUT) -> None:
         '''
         Poll pod termination.
+
+        Bug fixed 2026-09-26: this previously slept the FULL `timeout_seconds` between every
+        check instead of using it as an overall deadline (the pattern every sibling poll_*/get_*
+        method in this class already uses - poll_status/get_pod_ip both track elapsed time against
+        a real timeout and sleep 1s per iteration). A pod that was actually already gone by the
+        time of the very first check still had to wait out a second full `timeout_seconds` sleep
+        before the loop ever looked again - confirmed live: a real delete's own container-maker
+        logs showed the pod already terminated 20s in, but the caller (Device Agent) didn't get a
+        response back until it looped through that same 20s window again for nothing. Also never
+        raised TimeoutError on a pod that never actually disappears, unlike every sibling method -
+        now consistent with them.
         :params: namespace_name: str
         :params: pod_name: str
         :params: timeout_seconds: float
         '''
-        is_terminated: bool = False
-        while is_terminated != True:
+        start_time = time.time()
+        while (time.time() - start_time) < timeout_seconds:
             pod: dict = cls.get(GetPodDataClass(**{'namespace_name': namespace_name, 'pod_name': pod_name}))
             is_terminated = (pod == {})
             logger.info("polling pod termination", extra={"pod_name": pod_name, "namespace_name": namespace_name, "is_terminated": is_terminated})
-            time.sleep(timeout_seconds)
+            if is_terminated:
+                return
+            time.sleep(1)
+        raise TimeoutError(f"Timeout waiting for pod {pod_name} to terminate after {timeout_seconds} seconds")
 
     @classmethod
     def delete(cls, data: DeletePodDataClass) -> dict:

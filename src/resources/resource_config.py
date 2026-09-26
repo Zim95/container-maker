@@ -103,7 +103,14 @@ INGRESS_TERMINATION_TIMEOUT: float = 20.0
 # ~110MB ssh_ubuntu image); 180s gives headroom while still failing fast on a genuinely stuck pod.
 POD_UPTIME_TIMEOUT: float = 180.0
 POD_IP_TIMEOUT_SECONDS: float = 20.0
-POD_TERMINATION_TIMEOUT: float = 20.0
+# Bumped 2026-09-26 alongside fixing poll_termination's own polling-interval bug (it never
+# actually enforced this value as a deadline before - see that method's docstring): a real
+# observed delete took ~20s to confirm terminated (matching Kubernetes' default 30s
+# terminationGracePeriodSeconds, no override set anywhere in this repo), so 20s left virtually no
+# headroom once this value started being enforced as a real timeout instead of an unused sleep
+# duration. 60s gives real headroom over the default grace period plus gVisor sandbox teardown
+# overhead, same "measured + headroom" reasoning POD_UPTIME_TIMEOUT's own comment already uses.
+POD_TERMINATION_TIMEOUT: float = 60.0
 
 # Timeout for service uptime
 SERVICE_IP_TIMEOUT_SECONDS: float = 20.0
