@@ -1,7 +1,6 @@
 # modules
 from abc import ABC, abstractmethod
 import base64
-import threading
 import time
 import os
 from datetime import datetime
@@ -19,8 +18,7 @@ from src.common.logging_setup import get_logger
 from src.resources.resource_config import POD_IP_TIMEOUT_SECONDS, POD_UPTIME_TIMEOUT, POD_TERMINATION_TIMEOUT, CONTAINER_READINESS_TIMEOUT_SECONDS, IMAGE_BUILD_TIMEOUT_MINUTES, USER_POD_IMAGE_PULL_SECRET_NAME
 from src.resources.resource_config import SNAPSHOT_DIR, SNAPSHOT_FILE_NAME
 from src.resources.resource_config import USER_POD_RUNTIME_CLASS
-from src.common.config import REPO_NAME, REPO_PASSWORD, BROWSETERM_CLOUD_API_URL, CLOUD_INTERNAL_API_TOKEN
-from src.cloud_client import CloudClient
+from src.common.config import REPO_NAME, REPO_PASSWORD
 from browseterm_storage import StorageLayer, get_storage
 
 # third party
@@ -412,14 +410,18 @@ class SaveUtility(KubernetesResourceManager):
         Returns as soon as the Job is created — does NOT block on Job completion. The Job's own
         process records SUCCEEDED/FAILED in the DB directly (see snapshot_job/main.py), and the
         save reconciler (src/resources/save_reconciler.py) catches the case where the Job dies
-        without reporting. This call's only remaining post-creation duty — patching the pod's
-        image definition for in-place crash recovery once the Job actually succeeds — is handed
-        off to a dedicated background thread (_wait_and_patch_pod_image) instead of running
-        inline, because inline used to mean holding one of container-maker's gRPC worker threads
-        (container-maker.app.py's --server_threads, default 10, shared across every create/
-        delete/exec/save RPC cluster-wide) for the entire save duration — up to
-        SNAPSHOT_JOB_TIMEOUT_SECONDS (70 min) in the worst case. A handful of concurrent saves
-        could previously exhaust that pool and stall every other user's request.
+        without reporting.
+
+        Fixed 2026-09-27: this used to also patch the live pod's own image definition once the
+        Job succeeded ("in-place crash recovery" - see git history for `_wait_and_patch_pod_image`
+        if that mechanism's own history is ever needed again), so a future crash would restart
+        from the snapshot instead of the original image. Kubernetes restarts a container the
+        instant `spec.containers[].image` changes on a running pod, though, so that patch made
+        every single Save disrupt the live session it was supposed to snapshot WITHOUT stopping -
+        defeating Save's own purpose. Now that `create()` sets `restart_policy: Never` (crash
+        recovery goes through status_monitor -> a skip-save Hibernate -> Resume-from-saved_image,
+        same as every other form of pod loss), there is no longer any reason to touch the live
+        pod's spec from here at all - this call is now save-only, and never restarts anything.
 
         :params:
             data: SavePodDataClass with environment_variables containing container_id and db credentials
@@ -483,21 +485,6 @@ class SaveUtility(KubernetesResourceManager):
             # ImagePullBackOff trying to pull it - taking down an otherwise-healthy container.
             image_name = f'{repo_name}/{data.pod_name}-image:latest'
 
-            # Step 3: hand the wait-then-patch-pod-image work to a dedicated thread, off the
-            # shared gRPC worker pool, and return immediately.
-            threading.Thread(
-                target=cls._wait_and_patch_pod_image,
-                kwargs={
-                    'job_namespace': job_info['namespace_name'],
-                    'job_name': job_info['job_name'],
-                    'pod_namespace': data.namespace_name,
-                    'pod_name': data.pod_name,
-                    'container_id': container_id,
-                },
-                daemon=True,
-                name=f"save-finalize-{data.pod_name}",
-            ).start()
-
             return {
                 'image_name': image_name,
                 # For any caller that needs a synchronous guarantee the image is actually built
@@ -514,59 +501,6 @@ class SaveUtility(KubernetesResourceManager):
             raise UnsupportedRuntimeEnvironment(f'Unsupported Run time Environment: {str(ure)}') from ure
         except Exception as e:
             raise Exception(f'Save pod error occured: {str(e)}') from e
-
-    @classmethod
-    def _wait_and_patch_pod_image(cls, job_namespace: str, job_name: str, pod_namespace: str, pod_name: str, container_id: str) -> None:
-        '''
-        Runs on its own background thread (started by save_image, NOT the shared gRPC worker
-        pool). Waits for the snapshot Job to finish and, only on success, patches the live pod's
-        image definition so a future in-place crash restarts it from the new snapshot.
-
-        The real pushed reference is read back from Cloud's own containers.saved_image (which the
-        Job itself reports via report_snapshot_result on success) rather than guessed here - see
-        save_image's own comment for the real incident this fixes: a guessed, never-actually-
-        pushed reference silently corrupted a live pod's spec, and any later unrelated restart hit
-        permanent ImagePullBackOff pulling an image that was never real.
-
-        Never raises to its caller (there is no caller — it's a thread target): a failed or
-        timed-out Job already gets Failed recorded in the DB by the Job's own process, or by the
-        save reconciler if it died without reporting. This thread has nothing further to do in
-        that case beyond logging.
-        '''
-        try:
-            from src.resources.job_manager import JobManager
-            logger.info("waiting for snapshot job to complete", extra={"pod_name": pod_name, "namespace_name": pod_namespace, "job_name": job_name})
-            JobManager.wait_for_job_completion(namespace_name=job_namespace, job_name=job_name)
-            logger.info("snapshot job completed successfully", extra={"pod_name": pod_name, "namespace_name": pod_namespace})
-
-            cloud_client = CloudClient(BROWSETERM_CLOUD_API_URL, CLOUD_INTERNAL_API_TOKEN)
-            container = cloud_client.get_container(container_id)
-            image_name = container.get("saved_image") if container else None
-            if not image_name:
-                logger.warning(
-                    "snapshot job succeeded but Cloud has no saved_image yet - skipping crash-recovery "
-                    "pod-image patch rather than guessing a reference that may not exist",
-                    extra={"pod_name": pod_name, "namespace_name": pod_namespace, "container_id": container_id},
-                )
-                return
-
-            # Point the pod's main container at the saved image, so if it CRASHES the kubelet
-            # restarts it from the snapshot immediately (in-place crash recovery). Deliberate
-            # hibernation deletes the pod entirely and resumes via create-from-saved_image instead.
-            logger.info("updating pod image definition", extra={"pod_name": pod_name, "namespace_name": pod_namespace, "image_name": image_name})
-            PodManager._update_pod_image(
-                namespace_name=pod_namespace,
-                pod_name=pod_name,
-                image_name=image_name
-            )
-            logger.info("pod image definition updated (used for in-place crash recovery)", extra={"pod_name": pod_name, "namespace_name": pod_namespace, "image_name": image_name})
-        except Exception:
-            logger.warning(
-                "snapshot job did not complete successfully; skipping crash-recovery pod-image patch "
-                "(save failure is already/will be recorded in the DB by the Job itself or the save reconciler)",
-                extra={"pod_name": pod_name, "namespace_name": pod_namespace, "job_name": job_name},
-                exc_info=True,
-            )
 
 
 class PodManager(KubernetesResourceManager):
@@ -891,37 +825,6 @@ class PodManager(KubernetesResourceManager):
             raise Exception(f'Error occured: {str(e)}') from e
 
     @classmethod
-    def _update_pod_image(cls, namespace_name: str, pod_name: str, image_name: str) -> None:
-        '''
-        Update a pod's main container image definition in place.
-        The pod will use the new image on its next restart.
-        
-        :params: namespace_name: str - Namespace of the pod
-        :params: pod_name: str - Name of the pod
-        :params: image_name: str - New image to use
-        '''
-        try:
-            # Read the current pod
-            pod = cls.client.read_namespaced_pod(name=pod_name, namespace=namespace_name)
-            
-            # Update the image on the main container (the pod's only container).
-            for container in pod.spec.containers:
-                if container.name == pod_name:
-                    container.image = image_name
-            
-            # Patch the pod with the new image
-            cls.client.patch_namespaced_pod(
-                name=pod_name,
-                namespace=namespace_name,
-                body=pod
-            )
-            
-            logger.info("updated pod image", extra={"pod_name": pod_name, "namespace_name": namespace_name, "image_name": image_name})
-
-        except ApiException as e:
-            raise ApiException(f'Error updating pod {pod_name} image: {str(e)}') from e
-
-    @classmethod
     def create(cls, data: CreatePodDataClass) -> dict:
         '''
         Create a pod.
@@ -1039,6 +942,15 @@ class PodManager(KubernetesResourceManager):
                     }
                 ),
                 spec=V1PodSpec(
+                    # restart_policy Never (default would be Always): an in-container crash (e.g.
+                    # sshd dying) must NOT silently restart in place, reinitializing the writable
+                    # layer from whatever image happens to be live - there is no PVC backing the
+                    # user's filesystem, so an in-place restart is indistinguishable from data
+                    # loss back to that image. A crash now leaves the pod Failed, which
+                    # status_monitor observes and turns into a real, user-visible recovery
+                    # (skip-save Hibernate -> Resume from the last saved_image), matching how
+                    # every other form of pod loss already recovers.
+                    restart_policy="Never",
                     # Default ServiceAccount, and DO NOT mount its API token: the untrusted user shell
                     # has no reason to talk to the k8s API. (The old sidecar SA + token are gone.)
                     automount_service_account_token=False,
