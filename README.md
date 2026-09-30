@@ -5,7 +5,66 @@ API to create, list, delete and update containers in different container environ
 1. Before starting this container maker you need to have grpc certificates in place.
 2. To do that visit this repository: `https://github.com/Zim95/grpc_ssl_cert_generator` and follow the steps mentioned in the `README.md` file.
 
-# Run locally
+## `env.mk`
+
+Create an `env.mk` file at the root of the repository — it's read by every `make` target:
+
+```Makefile
+REPO_NAME=<your-image-registry-name>       # e.g. zim95 - where snapshot images are pushed
+REPO_PASSWORD=<your-image-registry-password>
+USER_NAME=<your-docker-username>
+NAMESPACE=<kubernetes-namespace>           # e.g. browseterm
+INGRESS_HOST=<your-domain-name>            # localhost is fine without a real domain
+HOST_DIR=<absolute-path-to-this-repo>      # dev only - mounted into the dev pod for hot reload
+STORAGE_LAYER=minio                        # or `local` for a PVC-backed dev setup
+MINIO_ENDPOINT=<host:port>                 # only needed when STORAGE_LAYER=minio
+MINIO_BUCKET=<bucket-name>
+MINIO_SECURE=false
+BROWSETERM_CLOUD_API_URL=<Cloud's base URL>  # e.g. https://api.browseterm.puhtaeto.com
+```
+
+`STORAGE_LAYER`/`MINIO_*` configure `browseterm-storage`, used for container filesystem snapshots
+(see that repo's own README). `MINIO_ACCESS_KEY`/`MINIO_SECRET_KEY` are supplied separately via a
+Kubernetes Secret, never templated into a manifest.
+
+## Development mode (hot-reload inside the cluster)
+
+Container Maker needs to run inside a container for its Kubernetes client libraries to work, so
+day-to-day development happens inside a pod with your working directory mounted in, not on the
+host directly.
+
+> Windows: the shell scripts under `scripts/` won't run natively — use WSL, or set things up
+> manually following the same steps.
+
+1. Install Docker Desktop and enable its built-in Kubernetes cluster:
+   `https://docs.docker.com/desktop/features/kubernetes/`.
+2. Clone this repository and make the development entrypoint executable:
+   ```bash
+   chmod +x ./infra/k8s/development/entrypoint-development.sh
+   ```
+3. Fill in `env.mk` (above).
+4. Build and deploy the dev image:
+   ```bash
+   make dev_build
+   make dev_setup
+   ```
+5. Watch for the pod, then exec into it:
+   ```bash
+   kubectl get pods -n <your-namespace> --watch
+   kubectl exec -it <pod-name> -n <your-namespace> -- bash
+   ```
+6. Confirm your working directory is mounted (create a file locally, check it shows up inside the
+   pod), then activate the Poetry venv and install dependencies:
+   ```bash
+   source $(poetry env info --path)/bin/activate
+   poetry install
+   ```
+7. When done:
+   ```bash
+   make dev_teardown
+   ```
+
+# Run locally (without the cluster mount)
 1. Clone the repository.
     ```
     git clone https://github.com/Zim95/container-maker

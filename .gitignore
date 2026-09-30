@@ -162,3 +162,5 @@ cython_debug/
 cert/
 
 env.mk
+
+.DS_Store

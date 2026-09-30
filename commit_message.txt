@@ -1,2 +1,0 @@
-pod_manager.py - Updated SaveUtility, Added delete local image.
-test_save_utility.py - Updated test for SaveUtility, Added check for deleting local image.
