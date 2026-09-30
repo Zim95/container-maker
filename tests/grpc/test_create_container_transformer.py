@@ -110,6 +110,28 @@ class TestCreateContainerTransformer(TestCase):
         # environment variables
         self.assertEqual(input_data.environment_variables, self.environment_variables)
 
+    def test_create_container_input_data_transformer_unspecified_exposure_level_maps_to_internal(self) -> None:
+        '''
+        Regression test (2026-09-30): browseterm-server never sets exposure_level explicitly, so
+        every real request carries proto's default EXPOSURE_LEVEL_UNSPECIFIED (0). That used to
+        fall through exposure_level_map's .get() to CLUSTER_LOCAL, which makes Containers.create()
+        create a ClusterIP Service for every container and return the Service's IP instead of the
+        pod's - the real cause of containers.ip_address ending up as a 10.43.x.x Service IP that
+        socket-ssh couldn't reliably reach. UNSPECIFIED must map to INTERNAL (pod only).
+        '''
+        print('Test: test_create_container_input_data_transformer_unspecified_exposure_level_maps_to_internal')
+        request: CreateContainerRequest = CreateContainerRequest(
+            container_name=self.container_name,
+            network_name=self.namespace_name,
+            image_name=self.image_name,
+            exposure_level=GRPCExposureLevel.EXPOSURE_LEVEL_UNSPECIFIED,
+            publish_information=self.publish_information,
+            environment_variables=self.environment_variables,
+            resource_requirements=self.resource_requirements.to_dict()
+        )
+        input_data: CreateContainerDataClass = CreateContainerInputDataTransformer.transform(request)
+        self.assertEqual(input_data.exposure_level, ExposureLevel.INTERNAL)
+
     def test_create_container_output_data_transformer(self) -> None:
         '''
         Test the output data transformer.

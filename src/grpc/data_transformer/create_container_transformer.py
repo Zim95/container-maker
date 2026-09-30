@@ -15,12 +15,22 @@ class CreateContainerInputDataTransformer(InputDataTransformer):
     @classmethod
     def transform(cls, input_data: CreateContainerRequest) -> CreateContainerDataClass:
         exposure_level_map: dict = {
+            0: ExposureLevel.INTERNAL,  # proto EXPOSURE_LEVEL_UNSPECIFIED - browseterm-server always sends this
             1: ExposureLevel.INTERNAL,
             2: ExposureLevel.CLUSTER_LOCAL,
             3: ExposureLevel.CLUSTER_EXTERNAL,
             4: ExposureLevel.EXPOSED
         }
-        exposure_level: ExposureLevel = exposure_level_map.get(input_data.exposure_level, ExposureLevel.CLUSTER_LOCAL)
+        # Fail safe toward INTERNAL (pod only, no Service) for any unrecognized value, not
+        # CLUSTER_LOCAL - defaulting to CLUSTER_LOCAL silently created a ClusterIP Service for
+        # every container (browseterm-server always sends 0, which wasn't in this map), and
+        # Containers.create() returns the LAST-created resource's IP as container_ip - so every
+        # Create/Resume was handing back the Service's ClusterIP instead of the pod's real IP.
+        # socket-ssh connects directly to that IP on port 22; a freshly-created ClusterIP has a
+        # window before kube-proxy programs its DNAT rule where that connection just hangs until
+        # timeout. Caught live 2026-09-30: containers.ip_address held a 10.43.x.x Service IP,
+        # only corrected minutes later by status_monitor's resource_reconciler.py periodic sweep.
+        exposure_level: ExposureLevel = exposure_level_map.get(input_data.exposure_level, ExposureLevel.INTERNAL)
         publish_information: list[PublishInformationDataClass] = [
             PublishInformationDataClass(
                 publish_port=publish_info.publish_port,
