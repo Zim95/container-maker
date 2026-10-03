@@ -155,7 +155,10 @@ spec:
               key: MINIO_ROOT_PASSWORD
         # container-maker holds no Postgres credential of its own (migrated off direct DB access
         # onto Cloud's internal container API - see p.md's writeup, and src/cloud_client.py). Same
-        # shared internal-service-token secret every other trusted-SYSTEM caller uses.
+        # shared internal-service-token secret every other trusted-SYSTEM caller uses - still
+        # needed for save_reconciler.py's own genuinely cluster-wide stuck-saves sweep only;
+        # finishing Part 12 moved containers.py's own save() self-heal lookup off this entirely,
+        # onto Device Agent's local API below.
         - name: BROWSETERM_CLOUD_API_URL
           value: "${BROWSETERM_CLOUD_API_URL}"
         - name: CLOUD_INTERNAL_API_TOKEN
@@ -163,6 +166,10 @@ spec:
             secretKeyRef:
               name: browseterm-internal-api-token
               key: CLOUD_INTERNAL_API_TOKEN
+        # Device Agent's private, ClusterIP-only local API (migration Part 12, completed) - used
+        # by src/device_agent_client.py for containers.py's save() self-heal.
+        - name: DEVICE_AGENT_LOCAL_API_URL
+          value: "${DEVICE_AGENT_LOCAL_API_URL}"
         # NOTE: no volumeMounts / hostPath — code is baked into the image (unlike development.yaml).
 ---
 apiVersion: v1

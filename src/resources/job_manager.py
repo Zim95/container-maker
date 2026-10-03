@@ -18,7 +18,6 @@ from kubernetes.client import V1ResourceRequirements
 from kubernetes.client.rest import ApiException
 
 # modules
-import src.common.config as config
 from src.resources import KubernetesResourceManager
 from src.common.logging_setup import get_logger, request_id_var
 from src.resources.resource_config import (
@@ -116,12 +115,16 @@ class JobManager(KubernetesResourceManager):
 
             # Job container with privileged access (needs a Docker daemon to build/push).
             # NAMESPACE_NAME is the USER namespace so the Job can find this container's tar in
-            # MinIO, even though the Job itself runs in the trusted namespace. CLOUD_INTERNAL_API_
-            # TOKEN/BROWSETERM_CLOUD_API_URL let the Job report its own progress through Cloud's
-            # internal snapshot API (allocate_snapshot/report_snapshot_result) - the Job never gets
-            # a Postgres credential of its own (P17 removed that dependency entirely on the Job's
-            # own side; this closes the matching gap on container-maker's side, which never
-            # actually injected these two vars before, so the Job's Cloud API calls always 401'd).
+            # MinIO, even though the Job itself runs in the trusted namespace (same one Device
+            # Agent runs in, which is why the Job's own DEVICE_AGENT_LOCAL_API_URL default - a
+            # short ClusterIP DNS name - resolves correctly with no explicit env var needed here).
+            # Finishing Part 12: allocate_snapshot/report_snapshot_result now go through Device
+            # Agent's local API instead of a direct Cloud call, so no CLOUD_INTERNAL_API_TOKEN/
+            # BROWSETERM_CLOUD_API_URL injection is needed any more - the Job never gets a
+            # Postgres OR Cloud credential of its own (P17 removed the former; this removes the
+            # latter, which - closing a related gap found at the same time - container-maker had
+            # also never actually injected correctly before this, so the Job's Cloud API calls had
+            # always 401'd regardless).
             job_env = {
                 "CONTAINER_ID": container_id,
                 "POD_NAME": pod_name,
@@ -130,8 +133,6 @@ class JobManager(KubernetesResourceManager):
                 "REPO_PASSWORD": repo_password,
                 "SNAPSHOT_PATH": snapshot_path,
                 "SNAPSHOT_DIR": SNAPSHOT_DIR,
-                "BROWSETERM_CLOUD_API_URL": config.BROWSETERM_CLOUD_API_URL,
-                "CLOUD_INTERNAL_API_TOKEN": config.CLOUD_INTERNAL_API_TOKEN,
                 # Propagate the caller's correlation id into the detached Job so its logs
                 # (a separate process/pod) can be tied back to the originating request.
                 "REQUEST_ID": request_id_var.get(),

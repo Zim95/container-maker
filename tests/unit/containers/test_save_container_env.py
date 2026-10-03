@@ -11,15 +11,16 @@ class TestSaveContainerEnvFromEnviron(TestCase):
     '''
     Unit test for KubernetesContainerManager.save().
 
-    This is a UNIT test: no cluster, no Cloud. The namespace lookup, the container lookup
-    (CloudClient.get_container/update_container), the pod listing (PodManager.list) and
-    PodManager.save are all mocked.
+    This is a UNIT test: no cluster, no Cloud, no Device Agent. The namespace lookup, the
+    container lookup (finishing Part 12: DeviceAgentClient.get_container/
+    update_container_kubernetes_id, via Device Agent's local API, not a direct Cloud call any
+    more), the pod listing (PodManager.list) and PodManager.save are all mocked.
 
     Guards:
       1. The request's container_id is the DB id. save() resolves the LIVE pod from the container's
          own row (exact pod name in associated_resources) -- NOT from the unreliable
          kubernetes_id -- and snapshots that pod.
-      2. The pod's real current uid is written back via Cloud (self-heal of kubernetes_id).
+      2. The pod's real current uid is written back via Device Agent (self-heal of kubernetes_id).
       3. CONTAINER_ID stays the DB id (so the Job updates the right row). No DB credentials of any
          kind are forwarded to the Job any more (container-maker holds none itself, P17+this
          migration - see p.md's writeup).
@@ -46,8 +47,9 @@ class TestSaveContainerEnvFromEnviron(TestCase):
             ],
         }
 
-    def _mock_cloud_client(self):
-        '''CloudClient(...) -> instance whose get_container returns the row; update_container is captured.'''
+    def _mock_device_agent_client(self):
+        '''DeviceAgentClient() -> instance whose get_container returns the row;
+        update_container_kubernetes_id is captured.'''
         client_instance = MagicMock()
         client_instance.get_container.return_value = self.row_data
         return MagicMock(return_value=client_instance), client_instance
@@ -60,11 +62,11 @@ class TestSaveContainerEnvFromEnviron(TestCase):
             {'pod_name': 'testc-pod-111', 'pod_id': 'other-uid', 'pod_labels': {'app': 'test-c'}},
         ]
 
-    def test_resolves_pod_by_name_and_selfheals_uid_via_cloud(self) -> None:
-        print('Test: test_resolves_pod_by_name_and_selfheals_uid_via_cloud')
-        mock_client_cls, client_instance = self._mock_cloud_client()
+    def test_resolves_pod_by_name_and_selfheals_uid_via_device_agent(self) -> None:
+        print('Test: test_resolves_pod_by_name_and_selfheals_uid_via_device_agent')
+        mock_client_cls, client_instance = self._mock_device_agent_client()
         mock_save = MagicMock(return_value={'pod_name': self.pod_name})
-        with patch('src.containers.containers.CloudClient', mock_client_cls), \
+        with patch('src.containers.containers.DeviceAgentClient', mock_client_cls), \
              patch('src.containers.containers.NamespaceManager.get', return_value={'namespace_name': self.namespace_name}), \
              patch('src.containers.containers.PodManager.list', return_value=self._pods()), \
              patch('src.containers.containers.PodManager.save', mock_save):
@@ -79,9 +81,9 @@ class TestSaveContainerEnvFromEnviron(TestCase):
         self.assertEqual(save_pod_data.pod_name, self.pod_name)
         self.assertEqual(save_pod_data.namespace_name, self.namespace_name)
 
-        # self-heal: kubernetes_id updated to the pod's REAL uid, via Cloud, id-scoped only
-        client_instance.update_container.assert_called_once_with(
-            self.container_id, {'kubernetes_id': self.real_uid}
+        # self-heal: kubernetes_id updated to the pod's REAL uid, via Device Agent, id-scoped only
+        client_instance.update_container_kubernetes_id.assert_called_once_with(
+            self.container_id, self.real_uid
         )
 
         # No DB credentials of any kind forwarded to the Job; CONTAINER_ID stays the DB id

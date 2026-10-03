@@ -3,7 +3,7 @@
 # env.mk is Makefile syntax). No HOSTPATH — code is baked into the image, not hostPath-mounted.
 set -euo pipefail
 if [ $# -lt 3 ]; then
-    echo "Usage: $0 <namespace> <repo-name> <repo-password> <ingress-host> <storage-layer> <minio-endpoint> <minio-bucket> <minio-secure> [browseterm-cloud-api-url] [cloud-ingress-host] [cloud-ingress-host-ip]"
+    echo "Usage: $0 <namespace> <repo-name> <repo-password> <ingress-host> <storage-layer> <minio-endpoint> <minio-bucket> <minio-secure> [browseterm-cloud-api-url] [cloud-ingress-host] [cloud-ingress-host-ip] [device-agent-local-api-url]"
     exit 1
 fi
 YAML=./infra/k8s/deployment/deployment.yaml
@@ -26,5 +26,10 @@ export BROWSETERM_CLOUD_API_URL=${9:-http://browseterm.cloud.com:9999}
 # at all from inside browseterm-k3s-local.
 export CLOUD_INGRESS_HOST=${10:-browseterm.cloud.com}
 export CLOUD_INGRESS_HOST_IP=${11:-}
+# Device Agent's private, ClusterIP-only local API (migration Part 12, completed) - used by
+# src/device_agent_client.py for containers.py's save() self-heal. Defaults to the real Service's
+# own short DNS name (resolves correctly since container-maker runs in the same trusted namespace
+# Device Agent does) - this positional arg only needs to be set when that default doesn't apply.
+export DEVICE_AGENT_LOCAL_API_URL=${12:-browseterm-device-agent-local:50061}
 envsubst < "$YAML" | kubectl apply -f -
 echo "container-maker (prod) applied to namespace ${NAMESPACE}"

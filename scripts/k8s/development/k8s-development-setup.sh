@@ -2,7 +2,7 @@
 
 # Check if enough arguments are provided
 if [ $# -lt 3 ]; then
-    echo "Usage: $0 <namespace> <absolute-path-to-current-working-directory> <docker-repo-name> <docker-repo-password> <ingress-host> <storage-layer> [minio-endpoint] [minio-bucket] [minio-secure] [browseterm-cloud-api-url]"
+    echo "Usage: $0 <namespace> <absolute-path-to-current-working-directory> <docker-repo-name> <docker-repo-password> <ingress-host> <storage-layer> [minio-endpoint] [minio-bucket] [minio-secure] [browseterm-cloud-api-url] [device-agent-local-api-url]"
     exit 1
 fi
 
@@ -21,6 +21,11 @@ MINIO_SECURE=${9:-false}
 # from the existing browseterm-internal-api-token Secret, referenced directly in the manifest,
 # not templated here). Defaults to the project's standard Cloud DNS convention.
 BROWSETERM_CLOUD_API_URL=${10:-http://browseterm.cloud.com:9999}
+# Device Agent's private, ClusterIP-only local API (migration Part 12, completed) - used by
+# src/device_agent_client.py for containers.py's save() self-heal. Defaults to the real Service's
+# own short DNS name (resolves correctly since container-maker runs in the same trusted namespace
+# Device Agent does).
+DEVICE_AGENT_LOCAL_API_URL=${11:-browseterm-device-agent-local:50061}
 
 export NAMESPACE=$NAMESPACE
 export HOSTPATH=$HOSTPATH
@@ -32,4 +37,5 @@ export MINIO_ENDPOINT=$MINIO_ENDPOINT
 export MINIO_BUCKET=$MINIO_BUCKET
 export MINIO_SECURE=$MINIO_SECURE
 export BROWSETERM_CLOUD_API_URL=$BROWSETERM_CLOUD_API_URL
+export DEVICE_AGENT_LOCAL_API_URL=$DEVICE_AGENT_LOCAL_API_URL
 envsubst < $YAML | kubectl apply -f -

@@ -138,6 +138,10 @@ spec:
             secretKeyRef:
               name: browseterm-internal-api-token
               key: CLOUD_INTERNAL_API_TOKEN
+        # Device Agent's private, ClusterIP-only local API (migration Part 12, completed) - used
+        # by src/device_agent_client.py for containers.py's save() self-heal.
+        - name: DEVICE_AGENT_LOCAL_API_URL
+          value: "${DEVICE_AGENT_LOCAL_API_URL}"
         volumeMounts:
         - name: app-code
           mountPath: /app

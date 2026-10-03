@@ -336,6 +336,27 @@ reference = "main"
 resolved_reference = "0fca02012c51572d8a82d6db85f7b453cf9f2454"
 
 [[package]]
+name = "browseterm-device-control-spec"
+version = "0.1.0"
+description = "Protobuf API spec for the Browseterm Device Control gRPC stream (Cloud <-> Device Agent)"
+optional = false
+python-versions = ">=3.8,<3.12"
+groups = ["main"]
+files = []
+develop = false
+
+[package.dependencies]
+grpcio = "^1.70.0"
+grpcio-tools = "^1.70.0"
+protobuf = "^5.29.0"
+
+[package.source]
+type = "git"
+url = "https://github.com/Zim95/browseterm-device-control-spec.git"
+reference = "main"
+resolved_reference = "17d993dc44e8dd0ed60a5c2c0e0433adaf3030fe"
+
+[[package]]
 name = "browseterm-storage"
 version = "0.1.0"
 description = "Storage abstraction for Browseterm (local PVC or MinIO)"
@@ -3426,4 +3447,4 @@ files = [
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.11,<3.12"
-content-hash = "064c0cb6755d1c899aada4be119156c555014629e19ed3057ece6e10653f5475"
+content-hash = "ecd0cf9d58192d1dab86ed1eccf9667dd7e2c84025e5b53335d2c7b0f25c7a1c"

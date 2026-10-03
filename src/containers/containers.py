@@ -11,7 +11,7 @@ from collections import defaultdict
 
 # modules
 import src.common.config as config
-from src.cloud_client import CloudClient, CloudClientError
+from src.device_agent_client import DeviceAgentClient, DeviceAgentClientError
 from src.common.logging_setup import get_logger
 
 # dataclasses
@@ -391,8 +391,11 @@ class KubernetesContainerManager(ContainerManager):
         # kubernetes_id (pod uid) to find the pod -- that value is historically unreliable (it can be
         # wrong from creation or stale after a pod is recreated). Instead resolve the live pod from
         # this container's own DB row (exact pod name, with a stable label as a fallback).
-        cloud_client = CloudClient(config.BROWSETERM_CLOUD_API_URL, config.CLOUD_INTERNAL_API_TOKEN)
-        container_row_data = cloud_client.get_container(data.container_id)
+        #
+        # Finishing Part 12: this lookup goes through Device Agent's own local API now, on its
+        # per-device Bearer token, instead of a direct Cloud call with the global internal token.
+        device_agent_client = DeviceAgentClient()
+        container_row_data = device_agent_client.get_container(data.container_id)
         if not container_row_data:
             raise Exception(f'Container not found in database: id={data.container_id}')
 
@@ -406,8 +409,8 @@ class KubernetesContainerManager(ContainerManager):
             real_uid: str | None = pod.get('pod_id')
             if real_uid and container_row_data.get('kubernetes_id') != real_uid:
                 try:
-                    cloud_client.update_container(data.container_id, {"kubernetes_id": real_uid})
-                except CloudClientError:
+                    device_agent_client.update_container_kubernetes_id(data.container_id, real_uid)
+                except DeviceAgentClientError:
                     logger.warning("save(): could not self-heal kubernetes_id", extra={"container_id": data.container_id}, exc_info=True)
 
             # A pod gives a single dict; wrap it in a list to keep the output consistent.

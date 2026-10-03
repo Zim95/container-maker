@@ -8,9 +8,11 @@ credentials, never DB/Redis credentials"); container-maker was the one remaining
 
 Deliberately minimal, same shape as status_monitor's/snapshot_job's/reaper's own cloud_client.py
 (P09/P17/P18). Auth is the same interim internal-service-token shared secret every other
-trusted-SYSTEM caller uses - container-maker has no user_id of its own for either of these call
-sites (both were already id-only, unscoped-by-user direct-DB lookups before this migration, so
-this doesn't newly grant anything).
+trusted-SYSTEM caller uses. Finishing Part 12 moved `get_container` and the `kubernetes_id` case
+of `update_container` (containers.py's own save() self-heal) to Device Agent's local API instead
+(src/device_agent_client.py) - what's left here (`update_container`'s save_status/save_error case,
+`find_stuck_saves`) is save_reconciler.py's own genuinely cluster-wide sweep, which can't be
+scoped to a single device's Bearer token the way the device-specific calls could.
 """
 from typing import Any, Dict, List, Optional
 
@@ -63,21 +65,11 @@ class CloudClient:
             raise CloudClientError(response.status_code, message)
         return response.json()
 
-    def get_container(self, container_id: str) -> Optional[Dict[str, Any]]:
-        """GET /internal/containers/{container_id} - id-only, no user_id (mirrors the direct
-        ContainerOps.find_one({"id": ...}) lookup this replaces). Returns None on a 404, matching
-        the old direct-DB lookup's own "no row" contract, rather than raising."""
-        try:
-            return self._get(f"/internal/containers/{container_id}")["container"]
-        except CloudClientError as e:
-            if e.status_code == 404:
-                return None
-            raise
-
     def update_container(self, container_id: str, fields: Dict[str, Any]) -> None:
         """POST /internal/containers/{container_id} - a strict server-side whitelist
-        (kubernetes_id/save_status/save_error only); see container_handlers.py's
-        update_container_internal for exactly which fields it accepts."""
+        (save_status/save_error only - kubernetes_id was removed from it once containers.py's own
+        save() self-heal moved to Device Agent's local API, finishing Part 12); see
+        container_handlers.py's update_container_internal for exactly which fields it accepts."""
         self._post(f"/internal/containers/{container_id}", json_body=fields)
 
     def find_stuck_saves(self) -> List[Dict[str, Any]]:

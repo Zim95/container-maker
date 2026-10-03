@@ -13,10 +13,12 @@ class TestCreateSnapshotJobEnv(TestCase):
 
     Guards:
       1. The Job is created in the TRUSTED namespace (job_namespace), not the user's.
-      2. The Job holds no Postgres credential of its own at all (no envFrom, no DB_* literal
-         env vars) - it reports progress through Cloud's internal API instead
-         (BROWSETERM_CLOUD_API_URL/CLOUD_INTERNAL_API_TOKEN, injected as plain env vars from
-         container-maker's own config).
+      2. The Job holds no Postgres OR Cloud credential of its own at all (no envFrom, no DB_*
+         literal env vars, no BROWSETERM_CLOUD_API_URL/CLOUD_INTERNAL_API_TOKEN) - finishing
+         Part 12, it reports progress and its own structural save-attempt state through Device
+         Agent's local API instead (DEVICE_AGENT_LOCAL_API_URL's own default, a short ClusterIP
+         DNS name, resolves correctly since the Job runs in the same trusted namespace Device
+         Agent does - no explicit env var injection needed here).
       3. NAMESPACE_NAME (used to locate the tar in MinIO) is the USER namespace.
       4. Each storage var is its own env entry (not a single stringified "STORAGE_ENV_VARS").
     '''
@@ -67,22 +69,17 @@ class TestCreateSnapshotJobEnv(TestCase):
         print('Test: test_job_runs_in_trusted_namespace')
         self._invoke()  # the namespace assertions live in _invoke
 
-    def test_no_postgres_credential_of_its_own(self) -> None:
-        print('Test: test_no_postgres_credential_of_its_own')
+    def test_no_postgres_or_cloud_credential_of_its_own(self) -> None:
+        print('Test: test_no_postgres_or_cloud_credential_of_its_own')
         container = self._invoke()
         env_names = [ev.name for ev in (container.env or [])]
-        # No DB_* literal env vars, and no envFrom a DB credentials Secret at all - the Job
-        # reports progress through Cloud's internal API instead (see the next test).
+        # No DB_* literal env vars, no envFrom a DB credentials Secret at all, and (finishing
+        # Part 12) no BROWSETERM_CLOUD_API_URL/CLOUD_INTERNAL_API_TOKEN either - the Job reports
+        # progress and structural save-attempt state through Device Agent's local API instead.
         self.assertEqual([n for n in env_names if n.startswith('DB_')], [])
         self.assertFalse(container.env_from)
-
-    def test_cloud_api_vars_present_for_reporting_progress(self) -> None:
-        print('Test: test_cloud_api_vars_present_for_reporting_progress')
-        with patch('src.resources.job_manager.config.BROWSETERM_CLOUD_API_URL', 'http://cloud.example.com'), \
-             patch('src.resources.job_manager.config.CLOUD_INTERNAL_API_TOKEN', 'test-token'):
-            env_map = {ev.name: ev.value for ev in self._invoke().env}
-        self.assertEqual(env_map['BROWSETERM_CLOUD_API_URL'], 'http://cloud.example.com')
-        self.assertEqual(env_map['CLOUD_INTERNAL_API_TOKEN'], 'test-token')
+        self.assertNotIn('BROWSETERM_CLOUD_API_URL', env_names)
+        self.assertNotIn('CLOUD_INTERNAL_API_TOKEN', env_names)
 
     def test_metadata_vars_present_and_namespace_is_user_ns(self) -> None:
         print('Test: test_metadata_vars_present_and_namespace_is_user_ns')
