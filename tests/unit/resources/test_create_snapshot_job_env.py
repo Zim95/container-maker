@@ -63,6 +63,7 @@ class TestCreateSnapshotJobEnv(TestCase):
         self.assertTrue(mock_batch_api.create_namespaced_job.called)
         _, kwargs = mock_batch_api.create_namespaced_job.call_args
         self.assertEqual(kwargs['namespace'], self.job_namespace)
+        self._last_job_body = kwargs['body']
         return kwargs['body'].spec.template.spec.containers[0]
 
     def test_job_runs_in_trusted_namespace(self) -> None:
@@ -109,3 +110,15 @@ class TestCreateSnapshotJobEnv(TestCase):
         env_names = [ev.name for ev in self._invoke().env]
         self.assertIn('STORAGE_LAYER', env_names)
         self.assertNotIn('MINIO_ENDPOINT', env_names)
+
+    def test_pod_template_carries_the_networkpolicy_selector_label(self) -> None:
+        '''Found 2026-10-04: a Job's own metadata.labels (set below on the Job object) are NOT
+        copied onto the Pods it spawns by Kubernetes - only job-name/controller-uid are. Device
+        Agent's local-api NetworkPolicy selects ingress on `app: snapshot-job`, so the POD
+        TEMPLATE itself (not just the Job object) must carry that label, or every
+        AllocateSnapshot/ReportSnapshotResult call from the Job to Device Agent silently times
+        out (the real cause of Save hanging on "Didn't hear back in time").'''
+        print('Test: test_pod_template_carries_the_networkpolicy_selector_label')
+        self._invoke()
+        pod_template_labels = self._last_job_body.spec.template.metadata.labels
+        self.assertEqual(pod_template_labels.get('app'), 'snapshot-job')

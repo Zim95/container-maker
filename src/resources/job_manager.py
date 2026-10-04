@@ -170,6 +170,14 @@ class JobManager(KubernetesResourceManager):
             # Job spec - runs once and terminates
             job_spec = V1JobSpec(
                 template=V1PodTemplateSpec(
+                    # Kubernetes does NOT copy a Job's own metadata.labels (below) onto the Pods
+                    # it spawns - only the auto-generated job-name/controller-uid labels land on
+                    # the pod. browseterm-device-agent's local-api NetworkPolicy selects on
+                    # `app: snapshot-job`, so without this the Pod never matches that allow-list
+                    # and every AllocateSnapshot/ReportSnapshotResult call to Device Agent's local
+                    # API silently times out (found 2026-10-04: every Save hung on "Didn't hear
+                    # back in time" because of this).
+                    metadata=V1ObjectMeta(labels={"app": "snapshot-job", "container-id": container_id}),
                     spec=V1PodSpec(
                         containers=[job_container],
                         # emptyDir scratch for unpacking the tar pulled from MinIO. Local PVC storage
